@@ -36,7 +36,7 @@ veddra <- read_excel("data/combined-veddra-list-clinical-terms-reporting-suspect
     hlt = `Current_High_Level_Term_(HLT)`,
     organ = `Current_System_Organ_Class_(SOC)_Term`
   ) |>
-  select(organ, hlt, pt, llt) |>                         # Keep only relevant columns
+  select(organ, hlt, pt, llt) |>                        # Keep only relevant columns
   mutate(llt = str_to_lower(llt))                       # Standardise LLTs to lowercase for joining
 
 # --------------------- EXPAND MULTIPLE REACTIONS PER DOG ---------------------
@@ -77,17 +77,22 @@ calc_dpa_hlt <- function(hlt_name, df, test_drug = "librela") {
   b <- sum(!df_bin$is_test & df_bin$has_hlt)
   n_test <- sum(df_bin$is_test)
   n_other <- sum(!df_bin$is_test)
+  c <- n_test  - a
+  d <- n_other - b
+  
   
   if (a < 5 || b < 5) return(NULL) # Drop sparse terms
   
   # Propoortional Reporting Ratio
   prr <- (a / n_test) / (b / n_other)
+  chiSq = ((a*d - b*c)^2) * (n_test+n_other) / ((a+b)*(c+d)*(a+c)*(b+d))
   
   tibble(
     hlt = hlt_name,
     librela_prop = a / n_test,
     other_prop = b / n_other,
-    prr = prr
+    prr = prr,
+    chi = chiSq
   )
 }
 
@@ -147,7 +152,7 @@ calc_prop_dpa <- function(organ_col, df, test_drug = "librela") {
   n_test <- sum(df_bin$is_test)
   n_other <- sum(!df_bin$is_test)
   
-  if (a < 5 || b < 5) return(NULL)
+  if (a < 10 || b < 10) return(NULL)
   
   prr <- (a / n_test) / (b / n_other)
   
@@ -224,7 +229,7 @@ calc_dpa_pt <- function(term, df, test_drug = "librela") {
   n_test <- sum(df_bin$is_test)
   n_other <- sum(!df_bin$is_test)
   
-  if (a < 5 || b < 5) return(NULL)
+  if (a < 10 || b < 10) return(NULL)
   
   prr <- (a / n_test) / (b / n_other)
   
@@ -297,3 +302,75 @@ organ_dpa_nopoly |>
     locations = cells_body(rows = Highlight)
   ) |>
   cols_hide(columns = Highlight)
+
+## assumes: tidyverse loaded; objects `matched` (your join result) available
+## matched has columns: dog_id (report proxy), drug, pt, hlt, organ
+## 1) FDA-style exclusions -----------------------------------------------
+
+excl_pts   <- c("Emesis")
+excl_hlt   <- c("Lack of efficacy")
+excl_socs  <- c("Product defects","Med error","Med dev","IGA Animal","Other events")
+
+pt_df <- matched |>
+  filter(!is.na(pt)) |>
+  mutate(
+    pt   = str_to_title(pt),
+    hlt  = str_to_title(hlt),
+    organ= str_to_title(organ)
+  ) |>
+  filter(!(pt %in% excl_pts),
+         !(hlt %in% excl_hlt),
+         !(organ %in% str_to_title(excl_socs))) |>
+  distinct(dog_id, drug, pt)        # report × drug × PT presence
+
+## 2) Helper to compute 2×2, PRR, chi-square, EBGM/EB05 ------------------
+
+dpa_one_pt <- function(df, term, test_drug = "librela") {
+  x <- df |>
+    mutate(is_test = drug == test_drug,
+           has_pt  = pt == term) |>
+    group_by(dog_id, is_test) |>
+    summarise(has_pt = any(has_pt), .groups = "drop")
+  a <- sum(x$is_test &  x$has_pt)
+  c <- sum(x$is_test & !x$has_pt)
+  b <- sum(!x$is_test &  x$has_pt)
+  d <- sum(!x$is_test & !x$has_pt)
+  N <- a + b + c + d
+  if (N == 0) return(NULL)
+  
+  # PRR and chi-square (without Yates, as per many PV implementations)
+  prr <- (a / (a + c)) / (b / (b + d))
+  chi <- ( (a * d - b * c)^2 ) * N / ((a + b) * (c + d) * (a + c) * (b + d))
+  
+  # MGPS-style EBGM with simple Gamma-Poisson shrinker
+  # Expected under independence:
+  E   <- (a + c) * (a + b) / N
+  # Prior hyperparams (weakly informative). You can tune (alpha, beta); alpha=1,beta=1 is common.
+  alpha <- 1; beta <- 1
+  post_alpha <- alpha + a
+  post_beta  <- beta  + E
+  ebgm <- post_alpha / post_beta
+  # EB05 is lower 90% bound of (theta/E); theta ~ Gamma(post_alpha, post_beta)
+  eb05 <- qgamma(0.05, shape = post_alpha, rate = post_beta) / E
+  
+  tibble(
+    pt = term, A = a, B = b, C = c, D = d, N = N,
+    PRR = prr, ChiSq = chi, EBGM = ebgm, EB05 = eb05
+  )
+}
+
+## 3) Run across all PTs present for test drug ----------------------------
+
+pts <- pt_df |> filter(str_to_lower(drug) == "librela") |> distinct(pt) |> pull(pt)
+
+pt_dpa <- map_dfr(pts, ~ dpa_one_pt(pt_df, .x, test_drug = "librela")) |>
+  mutate(
+    signal_PRR = (A >= 3) & (PRR >= 2) & (ChiSq >= 4),
+    signal_EB  = EB05 >= 2,
+    SIGNAL     = signal_PRR | signal_EB
+  ) |>
+  arrange(desc(SIGNAL), desc(PRR))
+
+## 4) View signals (replicating FDA “any of the algorithms” rule) --------
+
+pt_dpa |> filter(SIGNAL)

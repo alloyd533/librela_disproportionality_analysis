@@ -1,13 +1,16 @@
-# vet_data_cleaning.R
+# 1) Load Packages -------------------------------------------------------------
+
 library(tidyverse)
 library(readxl)
 library(lubridate)
+
+# 2) Concatenate into a single dataframe ---------------------------------------
 
 # Define drug names
 drugs <- c("librela", "metacam", "previcox", "galliprant", "rimadyl", "onsior", "daxocox")
 
 # List all yearly CSV files
-file_list <- list.files("data", pattern = "^\\d{4}_eudra_.*\\.csv$", full.names = TRUE)
+file_list <- list.files("data/raw", pattern = "^\\d{4}_eudra_.*\\.csv$", full.names = TRUE)
 
 # Read and clean individual CSV file
 read_and_clean <- function(path) {
@@ -25,12 +28,12 @@ read_and_clean <- function(path) {
     }
   }
   
-  df <- df |>
+  df <- df %>%
     mutate(
       date = parsed,
       source_file = basename(path),
       year = str_extract(source_file, "^\\d{4}")
-    ) |>
+    ) %>%
     select(-Received_date)
   
   return(df)
@@ -41,22 +44,22 @@ for (drug in drugs) {
   drug_files <- keep(file_list, ~ str_detect(.x, paste0("eudra_", drug, "\\.csv$")))
   if (length(drug_files) > 0) {
     combined <- map_dfr(drug_files, read_and_clean)
-    write_csv(combined, file = file.path("data", paste0(drug, "_combined.csv")))
+    write_csv(combined, file = file.path("data/raw/", paste0(drug, "_combined.csv")))
   }
 }
 
 # Re-load cleaned drug data and apply filters
 fx_filter_combine <- function(df, drug_name) {
-  df |>
-    filter(Species == "Dog") |>
-    select(-c(Case_number, AER_form, source_file, Animals_treated)) |>
-    mutate(drug = drug_name) |>
+  df %>%
+    filter(Species == "Dog") %>%
+    select(-c(Case_number, AER_form, source_file, Animals_treated)) %>%
+    mutate(drug = drug_name) %>%
     select(drug, year, everything())
 }
 
 # Load each cleaned drug dataset, filter and assign
 for (drug in drugs) {
-  df <- read_csv(paste0("data/", drug, "_combined.csv"), show_col_types = FALSE)
+  df <- read_csv(paste0("data/raw/", drug, "_combined.csv"), show_col_types = FALSE)
   assign(drug, fx_filter_combine(df, drug))
 }
 
@@ -71,57 +74,60 @@ for (drug in drugs) {
   assign(drug, df_clean)
 }
 
-# Bind them all together
+# 3) Lengthen dataframe --------------------------------------------------------
 
-complete <- bind_rows(mget(drugs))
+# Each case can have multiple ADRs, separate each by pivotting longer
 
-### Pivot longer to separate reactions
-
-max_reactions <- complete$Reaction |>
-  str_count(",") |>
+max_reactions <- complete$Reaction %>%
+  str_count(",") %>%
   max(na.rm = TRUE) + 1
 
 reactions <- paste0("reaction", seq_len(max_reactions))
 
-complete_long <- complete |>
-  mutate(dog_id = row_number()) |>
-  separate_longer_delim(Reaction, delim = ",") |>
+complete_long <- complete %>%
+  mutate(dog_id = row_number()) %>%
+  separate_longer_delim(Reaction, delim = ",") %>%
   mutate(llt = str_trim(Reaction),
-         llt = str_to_lower(llt)) |>
+         llt = str_to_lower(llt)) %>%
   select(-Reaction)
 
+# 4) Match to VEDRA ADR codex --------------------------------------------------
+
+# load codex for drug reactions 
+
+veddra <- read_excel("data/combined-veddra-list-clinical-terms-reporting-suspected-adverse-events-animals-humans-veterinary-medicinal-products_en.xlsx")
 # Now join complete with veddra to get the terms
 
-matched <- complete_long |>
+matched <- complete_long %>%
   left_join(veddra, by = "llt")
 
 # Ensure each HLT maps to one organ system (if this is valid)
-hlt_map <- matched |>
-  select(hlt, organ) |>
+hlt_map <- matched %>%
+  select(hlt, organ) %>%
   distinct()
 
 # Now count occurrences per HLT × drug
-hlt_counts <- matched |>
+hlt_counts <- matched %>%
   count(hlt, drug, name = "n")
 
 # Join organ system back on using HLT
-hlt_props <- hlt_counts |>
-  left_join(hlt_map, by = "hlt") |>
+hlt_props <- hlt_counts %>%
+  left_join(hlt_map, by = "hlt") %>%
   
   # Get total reactions per drug (for proportions)
-  group_by(drug) |>
-  mutate(prop = n / sum(n)) |>
+  group_by(drug) %>%
+  mutate(prop = n / sum(n)) %>%
   ungroup()
 
-hlt_props_filtered <- hlt_props |>
-  filter(organ%in% c("Musculoskeletal disorders", "Neurological disorders")) |>
+hlt_props_filtered <- hlt_props %>%
+  filter(organ%in% c("Musculoskeletal disorders", "Neurological disorders")) %>%
   select(organ, hlt, drug, prop)
 
 
 
 # Pivot wider: HLTs as rows, drugs as columns
-hlt_prop_wide <- hlt_props_filtered |>
-  mutate(drug = str_to_sentence(drug)) |>
+hlt_prop_wide <- hlt_props_filtered %>%
+  mutate(drug = str_to_sentence(drug)) %>%
   pivot_wider(
     names_from = drug,
     values_from = prop,
@@ -130,26 +136,26 @@ hlt_prop_wide <- hlt_props_filtered |>
   
 require(gt)
 # Create nicely formatted gt table
-hlt_prop_wide |>
-  arrange(organ, hlt) |>
-  mutate(across(where(is.numeric), ~ scales::percent(.x, accuracy = 0.1))) |>
-  gt() |>
+hlt_prop_wide %>%
+  arrange(organ, hlt) %>%
+  mutate(across(where(is.numeric), ~ scales::percent(.x, accuracy = 0.1))) %>%
+  gt() %>%
   tab_header(
     title = "Proportional Reporting Table by High-Level Term (HLT)",
     subtitle = "Each cell = % of total reactions for that drug with that HLT"
-  ) |>
+  ) %>%
   tab_row_group(
     label = "MSK",
     rows = organ == "Musculoskeletal disorders"
-  ) |>
+  ) %>%
   tab_row_group(
     label = "Neurological",
     rows = organ == "Neurological disorders"
-  ) |>
+  ) %>%
   cols_label(
     hlt = "High-Level Term"
-  ) |>
-  cols_hide(columns = organ)|>
+  ) %>%
+  cols_hide(columns = organ)%>%
   
   # ✅ Add styling to the row group labels
   tab_style(
@@ -161,30 +167,30 @@ hlt_prop_wide |>
 
 
 # Create a binary for any of reactions are MSK or Neuro
-organ_level <- matched |>
-  group_by(dog_id, drug) |>
+organ_level <- matched %>%
+  group_by(dog_id, drug) %>%
   summarise(
     MSK = as.integer(any(str_detect(organ, regex("musculoskeletal", ignore_case = TRUE)))),
     Neuro = as.integer(any(str_detect(organ, regex("neurological", ignore_case = TRUE)))),
     .groups = "drop"
   ) 
   
-organ_table <- organ_level |>
-  group_by(drug) |>
+organ_table <- organ_level %>%
+  group_by(drug) %>%
   summarise(
     MSK_prop   = mean(MSK, na.rm = TRUE),
     Neuro_prop = mean(Neuro, na.rm = TRUE),
     .groups = "drop"
   )
 
-organ_table |>
-  mutate(drug = str_to_sentence(drug)) |>
-  mutate(across(where(is.numeric), ~ scales::percent(.x, accuracy = 0.1))) |>
-  gt::gt() |>
+organ_table %>%
+  mutate(drug = str_to_sentence(drug)) %>%
+  mutate(across(where(is.numeric), ~ scales::percent(.x, accuracy = 0.1))) %>%
+  gt::gt() %>%
   gt::tab_header(
     title = "Proportion of Dogs with MSK or Neuro Reactions",
     subtitle = "Binary indicator based on whether dog had any reaction in that organ system"
-  ) |>
+  ) %>%
   gt::cols_label(
     MSK_prop = "Musculoskeletal",
     Neuro_prop = "Neurological",
@@ -194,7 +200,7 @@ organ_table |>
 ## Disproportionality analysis
 
 calc_dpa_librela <- function(hlt_name, df) {
-  df_bin <- df |>
+  df_bin <- df %>%
     mutate(
       has_reaction = hlt == hlt_name,
       is_librela = drug == "librela"
@@ -242,25 +248,25 @@ calc_dpa_librela <- function(hlt_name, df) {
 
 
 
-dog_hlt_level <- matched |>
-  select(dog_id, drug, hlt) |>
+dog_hlt_level <- matched %>%
+  select(dog_id, drug, hlt) %>%
   distinct()
 
-librela_hlts <- dog_hlt_level |>
-  filter(drug == "librela") |>
-  distinct(hlt) |>
+librela_hlts <- dog_hlt_level %>%
+  filter(drug == "librela") %>%
+  distinct(hlt) %>%
   drop_na()
 
 librela_dpa <- map_dfr(librela_hlts$hlt, ~ calc_dpa_librela(.x, dog_hlt_level))
 
 library(ggplot2)
 
-librela_dpa |>
-  filter(prr > 1.5) |>
+librela_dpa %>%
+  filter(prr > 1.5) %>%
   mutate(
     hlt = fct_reorder(hlt, prr),
     sig_label = if_else(signals, "Signal", "No signal")
-  ) |>
+  ) %>%
   ggplot(aes(x = prr, y = hlt, fill = sig_label)) +
   geom_col() +
   scale_fill_manual(values = c("Signal" = "red", "No signal" = "grey80")) +
@@ -276,10 +282,10 @@ librela_dpa |>
 
 ## DPA at dog level
 
-organ_matrix <- matched |>
-  filter(!is.na(organ)) |>
-  distinct(dog_id, drug, organ) |>
-  mutate(value = 1) |>
+organ_matrix <- matched %>%
+  filter(!is.na(organ)) %>%
+  distinct(dog_id, drug, organ) %>%
+  mutate(value = 1) %>%
   pivot_wider(
     names_from = organ,
     values_from = value,
@@ -287,7 +293,7 @@ organ_matrix <- matched |>
   )
 
 calc_prop_dpa <- function(organ_col, df, test_drug = "librela") {
-  df_bin <- df |>
+  df_bin <- df %>%
     mutate(
       has_reaction = .data[[organ_col]] == 1,
       is_test = drug == test_drug
@@ -333,20 +339,20 @@ organ_dpa <- map_dfr(organ_cols, ~ calc_prop_dpa(.x, organ_matrix))
 
 library(scales)
 
-organ_dpa |>
+organ_dpa %>%
   mutate(
     librela_prop = percent(librela_prop, accuracy = 0.1),
     other_prop   = percent(other_prop, accuracy = 0.1),
     prr = round(prr, 2),
     chisq = round(chisq, 1),
     signals = if_else(signals, "⚠️", "")
-  ) |>
-  arrange(desc(prr)) |>
-  gt::gt() |>
+  ) %>%
+  arrange(desc(prr)) %>%
+  gt::gt() %>%
   gt::tab_header(
     title = "Organ-Level Disproportionality: Librela vs All Others",
     subtitle = "Proportion of dogs with any reaction in each system"
-  ) |>
+  ) %>%
   gt::cols_label(
     organ = "Organ System",
     librela_prop = "Librela %",
@@ -357,11 +363,11 @@ organ_dpa |>
   )
 
 
-organ_dpa |>
+organ_dpa %>%
   mutate(
     log_prr = log2(prr),
     sqrt_chisq = sqrt(chisq)
-  ) |>
+  ) %>%
   ggplot(aes(x = log_prr, y = sqrt_chisq, label = organ)) +
   geom_point(aes(color = signals)) +
   geom_hline(yintercept = sqrt(4), linetype = "dashed") +
@@ -386,24 +392,24 @@ pts_of_interest <- c(
   "Immune mediated haemolytic anaemia", 
   "Immune mediated thrombocytopenia", 
   "Immune mediated polyarthritis"
-) |> str_to_lower()
+) %>% str_to_lower()
 
-dog_pt <- matched |>
-  select(dog_id, drug, pt) |>
-  filter(!is.na(pt)) |>
-  mutate(pt = str_to_lower(pt)) |>
+dog_pt <- matched %>%
+  select(dog_id, drug, pt) %>%
+  filter(!is.na(pt)) %>%
+  mutate(pt = str_to_lower(pt)) %>%
   distinct()
 
-llt_subset <- dog_llt |>
+llt_subset <- dog_llt %>%
   filter(llt %in% llts_of_interest)
 
 calc_dpa_pt <- function(term, df, test_drug = "librela") {
-  df_bin <- df |>
+  df_bin <- df %>%
     mutate(
       has_pt = pt == term,
       is_test = drug == test_drug
-    ) |>
-    group_by(dog_id, is_test) |>
+    ) %>%
+    group_by(dog_id, is_test) %>%
     summarise(
       has_pt = any(has_pt),
       .groups = "drop"
@@ -443,20 +449,20 @@ calc_dpa_pt <- function(term, df, test_drug = "librela") {
 
 pt_dpa <- map_dfr(pts_of_interest, ~ calc_dpa_pt(.x, dog_pt))
 
-pt_dpa |>
+pt_dpa %>%
   mutate(
     librela_prop = scales::percent(librela_prop, accuracy = 0.1),
     other_prop   = scales::percent(other_prop, accuracy = 0.1),
     prr = round(prr, 2),
     chisq = round(chisq, 1),
     signal = if_else(signal, "⚠️", "")
-  ) |>
-  arrange(desc(prr)) |>
-  gt::gt() |>
+  ) %>%
+  arrange(desc(prr)) %>%
+  gt::gt() %>%
   gt::tab_header(
     title = "Disproportionality Analysis of Selected PTs",
     subtitle = "Librela vs Other Drugs (Dog-level, PT-based)"
-  ) |>
+  ) %>%
   gt::cols_label(
     pt = "Preferred Term (PT)",
     librela_prop = "Librela %",
