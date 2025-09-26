@@ -31,10 +31,12 @@ veddra <- read_excel(
 ## --- EXPAND REACTIONS & JOIN ---
 matched <- complete |>
   mutate(dog_id = row_number()) |>
-  tidyr::separate_longer_delim(Reaction, ",") |>
+  separate_longer_delim(Reaction, ",") |>
   mutate(llt = Reaction |> str_trim() |> str_to_lower()) |>
   select(-Reaction) |>
   left_join(veddra, by = "llt")
+
+write_rds(matched, "data/matched")
 
 ## --- Presence builders ---
 presence_by <- function(df, level = c("pt","hlt","organ")) {
@@ -50,7 +52,8 @@ dog_hlt <- presence_by(matched, "hlt")
 dog_org <- presence_by(matched, "organ")
 
 ## --- Core 2x2 + PRR + ChiSq ---
-dpa_one_term <- function(df, term_col, term_val, test_drug = "librela") {
+
+dpa_one_term <- function(df, term_col, term_val, test_drug = "bedinvetmab") {
   x <- df |>
     mutate(is_test = str_to_lower(drug) == str_to_lower(test_drug),
            has_trm = .data[[term_col]] == term_val) |>
@@ -70,7 +73,7 @@ dpa_one_term <- function(df, term_col, term_val, test_drug = "librela") {
   tibble(term = term_val, A = a, B = b, C = c, D = d, N = N, PRR = prr, ChiSq = chi)
 }
 
-run_dpa_base <- function(df_level, term_col = "pt", test_drug = "librela") {
+run_dpa_base <- function(df_level, term_col = "pt", test_drug = "bedinvetmab") {
   terms <- df_level |>
     filter(str_to_lower(drug) == str_to_lower(test_drug)) |>
     distinct(.data[[term_col]]) |>
@@ -79,6 +82,7 @@ run_dpa_base <- function(df_level, term_col = "pt", test_drug = "librela") {
 }
 
 ## --- EBGM/EB05 with openEBGM (no squashing for small data) ---
+
 ebgm_for_level <- function(df_level, term_col = "pt") {
   pairs <- df_level |>
     transmute(id = dog_id, var1 = str_to_title(drug), var2 = str_to_title(.data[[term_col]]))
@@ -104,15 +108,16 @@ ebgm_for_level <- function(df_level, term_col = "pt") {
 }
 
 ## --- PT analysis (repeat for HLT/Organ if needed) ---
-base_pt <- run_dpa_base(dog_pt, "pt", "librela")
+
+base_pt <- run_dpa_base(dog_pt, "pt", "bedinvetmab")
 eb_pt   <- ebgm_for_level(dog_pt, "pt") %>%
-  filter(drug == "Librela")
+  filter(drug == "bedinvetmab")
 
 
 pt_dpa <- base_pt |>
   left_join(eb_pt, by = "term") |>
   mutate(
-    signal_PRR = (A >= 3) | (PRR >= 2) | (ChiSq >= 4),
+    signal_PRR = (A >= 3) & (PRR >= 2) & (ChiSq >= 4),
     signal_EB  = EB05 >= 2,
     SIGNAL     = coalesce(signal_PRR, FALSE) | coalesce(signal_EB, FALSE)
   ) |>
@@ -133,14 +138,14 @@ pt_dpa |>
   filter(PRR >1, is.finite(PRR), SIGNAL == "TRUE") |>
   arrange(desc(PRR)) |>
   gt() |>
-  tab_header(title = "PT Disproportionality: Librela vs All Other Drugs") |>
+  tab_header(title = "PT Disproportionality: Bedvetinmab vs All Other Drugs") |>
   cols_label(term = "PT", ChiSq = "Chi²") |>
   data_color(columns = SIGNAL, colors = col_factor(c("#FFDFDF","#FFFFFF"), domain = c(TRUE, FALSE)))
 
 ## --- Monotherapy sensitivity (polypharmacy == 0) ---
 presence_by_nopoly <- function(level) matched |> filter(polypharmacy == "0") |> presence_by(level)
 pt_dpa_nopoly <- {
-  base_np <- run_dpa_base(presence_by_nopoly("pt"), "pt", "librela")
+  base_np <- run_dpa_base(presence_by_nopoly("pt"), "pt", "bedinvetmab")
   eb_np   <- ebgm_for_level(presence_by_nopoly("pt"), "pt")
   base_np |>
     left_join(eb_np, by = "term") |>
@@ -164,7 +169,7 @@ dog_hlt <- matched |>
   ) |>
   distinct()
 
-test_drug <- "Librela"
+test_drug <- "bedinvetmab"
 
 ## 2) 2x2 counts for Librela vs pooled others
 n_test  <- dog_hlt |> filter(drug == test_drug) |> distinct(dog_id) |> nrow()

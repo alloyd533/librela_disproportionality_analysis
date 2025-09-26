@@ -3,6 +3,7 @@ library(tidyverse)  # Core packages
 library(readxl)     # To read Excel files
 library(gt)         # To build summary tables
 library(scales)     # For percentage formatting
+require(openEBGM)   # For MGPS
 
 # --------------------- LOAD AND CLEAN DATA ---------------------
 
@@ -49,86 +50,209 @@ complete_long <- complete |>
          llt = str_to_lower(llt)) |>
   select(-Reaction)                                     # Drop original Reaction column
 
-# Join with VEDDRA to map each LLT to PT, HLT, and organ system
+# Join with VEDDRA to map each LLT to PT, HLT, and organ system then clean
 matched <- complete_long |>
-  left_join(veddra, by = "llt")
+  left_join(veddra, by = "llt") |>
+  rename(drug_hx = Drug,
+         sex = Gender,
+         death = Animals_died) |>
+  mutate(across(where(is.character) & !any_of("drug_hx"), as.factor),
+         year = factor(year),
+         death = factor(death),
+         sex = case_when(
+           sex == "FEMALE" ~ "f",
+           sex == "MALE" ~ "m",
+           TRUE ~ "unknown"
+         )) |>
+  select(-Animals_affected) |>
+  rename_with(tolower)
+          
+write_rds(matched, "data/matched")
 
-# --------------------- 1) HLT-LEVEL DISPROPORTIONALITY ---------------------
+# --------------------- 1) PT-LEVEL DISPROPORTIONALITY ---------------------
 
-# Prepare a dog-level dataset of each dog × HLT
-dog_hlt <- matched |>
-  select(dog_id, drug, hlt) |>
-  filter(!is.na(hlt)) |>
-  distinct()
+# Prepare a dog-level dataset of each dog × PT
+dog_pt <- matched |>
+  filter(!is.na(pt)) |>
+  arrange(dog_id, drug, pt) %>%  
+  distinct(dog_id, drug, pt, .keep_all = TRUE)
 
-# Function to calculate PRR for one HLT
-calc_dpa_hlt <- function(hlt_name, df, test_drug = "librela") {
-  df_bin <- df |>
-    mutate(
-      # Create logical for whether HLT/drug matches test drug
-      has_hlt = hlt == hlt_name,
-      is_test = drug == test_drug
-    ) |>
-    group_by(dog_id, is_test) |>
-    summarise(has_hlt = any(has_hlt), .groups = "drop")
-  
-  # 2x2 table components for disporportionality
-  a <- sum(df_bin$is_test & df_bin$has_hlt)
-  b <- sum(!df_bin$is_test & df_bin$has_hlt)
-  n_test <- sum(df_bin$is_test)
-  n_other <- sum(!df_bin$is_test)
-  c <- n_test  - a
-  d <- n_other - b
-  
-  
-  if (a < 5 || b < 5) return(NULL) # Drop sparse terms
-  
-  # Propoortional Reporting Ratio
-  prr <- (a / n_test) / (b / n_other)
-  chiSq = ((a*d - b*c)^2) * (n_test+n_other) / ((a+b)*(c+d)*(a+c)*(b+d))
-  
-  tibble(
-    hlt = hlt_name,
-    librela_prop = a / n_test,
-    other_prop = b / n_other,
-    prr = prr,
-    chi = chiSq
-  )
-}
+test_drug <- "bedinvetmab"
 
-# Run disproportionality analysis across all HLTs seen in librela reports
-hlt_list <- dog_hlt |>
-  filter(drug == "librela") |>
-  distinct(hlt) |>
-  pull(hlt)
+denoms <- dog_pt %>%
+  mutate(is_test = drug == test_drug) %>%
+  distinct(dog_id, is_test) %>%
+  summarise(n_test = sum(is_test), n_other = sum(!is_test), .groups = "drop")
 
-hlt_dpa <- map_dfr(hlt_list, ~ calc_dpa_hlt(.x, dog_hlt))
+dpa_pt <- dog_pt %>%
+  mutate(is_test = drug == test_drug) %>%
+  distinct(dog_id, is_test, pt) %>%                 # presence of PT within test/other per dog
+  group_by(pt) %>%
+  summarise(a = sum(is_test),                       # test drug + PT
+            b = sum(!is_test),                      # other drugs + PT
+            .groups = "drop") %>%
+  mutate(across(c(a,b), as.numeric),
+         n_test = denoms$n_test,
+         n_other = denoms$n_other,
+         c = n_test - a,
+         d = n_other - b,
+         n_tot = n_test + n_other,
+         bedinvetmab_prop = a / n_test, 
+         other_prop = b / n_other,
+         prr = (a / n_test) / (b / n_other),
+         chi = ((a*d - b*c)^2) * n_tot / ((a+b)*(c+d)*(a+c)*(b+d))) %>%
+  filter(a >= 3, b >= 3, is.finite(prr), is.finite(chi)) %>%
+  arrange(desc(prr))
 
-# Display HLT table
-hlt_dpa |>
+# Display pt table
+dpa_pt |>
   arrange(desc(prr)) |>
   mutate(
     prr = round(prr, 2),
-    librela_prop = percent(librela_prop, 0.1),
+    chi = round(chi, 2),
+    bedinvetmab_prop = percent(bedinvetmab_prop, 0.1),
     other_prop = percent(other_prop, 0.1),
-    Highlight = prr >= 2
+    Highlight = prr >= 2 & chi >=4,
   ) |>
+  select(pt, a, bedinvetmab_prop, b, other_prop, prr, chi, Highlight) |>
   gt() |>
   tab_header(
-    title = "High-Level Term (HLT) Disproportionality: Librela vs Others",
+    title = "Preferred Term (pt) Disproportionality: Bedinvetmab vs Comparator drugs",
     subtitle = "Dog-level proportions and PRRs"
   ) |>
   cols_label(
-    hlt = "HLT",
-    librela_prop = "Librela %",
-    other_prop = "Other Drugs %",
-    prr = "PRR"
+    pt = "Preferred Term",
+    bedinvetmab_prop = "Bedinvetmab %",
+    a = "Bedinvetmab Reports",
+    b = "Comparator Reports",
+    other_prop = "Comparator Drugs %",
+    prr = "PRR",
+    chi = "Chi-Square Value"
   ) |>
   tab_style(
     style = cell_fill(color = "#FFDFDF"),
     locations = cells_body(rows = Highlight)
   ) |>
   cols_hide(columns = Highlight)
+
+# --------------------- 2) Shrinkage methods -----------------------------------
+## ------------------------------------------------------------
+## 1) MGPS (openEBGM) — EBGM / EB05 (stratified)
+## ------------------------------------------------------------
+
+dat_mgps <- dog_pt |>
+  mutate(year = case_when(
+         year %in% 2004:2014 ~ "2004–2014",
+         year %in% 2015:2021 ~ "2015–2021",
+         year == 2022        ~ "2022",
+         year == 2023        ~ "2023",
+         year == 2024        ~ "2024",
+         year == 2025        ~ "2025",
+         TRUE                ~ NA_character_
+  )) |>
+  mutate(year = factor(
+    year,
+    levels = c("2004–2014","2015–2021","2022","2023","2024","2025")
+  )) |>
+  transmute(
+    id     = dog_id,
+    var1   = drug,
+    var2   = pt)
+
+,
+    # strat_year     = as.character(year),
+    # strat_region  = countrycode::countrycode(country, "country.name", "continent"),
+    # strat_sex    = toupper(sex),
+    # strat_reporter = tolower(reporter)
+  )
+
+# Process raw (stratify is logical; strata detected by substring 'strat')
+proc <- processRaw(
+  data     = dat_mgps,
+  # stratify = TRUE,   # uses all columns containing 'strat'
+  zeroes   = FALSE
+)
+
+set.seed(1)
+
+# startpoints for the initial hyperparameter guesses 
+theta_init <- data.frame(
+  alpha1 = c(0.5, 1), 
+  beta1 = c(0.5, 1),
+  alpha2 = c(2, 3),  
+  beta2 = c(2, 3),
+  p      = c(0.1, 0.2)
+)
+
+# estimate hyperparameters
+hyp  <- autoHyper(data = proc, 
+                  theta_init = theta_init, 
+                  squashed = FALSE)    # estimates the 2-gamma mixture prior
+
+# EBGM + quantiles (returns an openEBGM object; results in $data)
+obj  <- ebScores(processed = proc, hyper_estimate = hyp, quantiles = c(5, 95))
+res  <- obj$data
+
+# Pull Librela PT signals (common gate: A≥3 & EB05≥2)
+out <- res |>
+  filter(var1 == "bedinvetmab") |>
+  transmute(
+    pt = var2, N, E, RR, PRR, EBGM, EB05 = QUANT_05, EB95 = QUANT_95
+  ) |>
+  arrange(desc(EB05))
+
+sig_mgps <- filter(out, N >= 3, EB05 >= 2)
+
+## ------------------------------------------------------------
+## 2) BCPNN — EBGM / EB05 (stratified)
+## ------------------------------------------------------------
+ 
+
+# pooled 2×2 vs all other drugs, per PT
+n_tot <- nrow(dog_pt)
+n_lib <- sum(dog_pt$drug == "bedinvetmab")
+
+pt_tot <- dog_pt |> count(pt, name = "np1")
+pt_lib <- dog_pt |> 
+  filter(drug == "bedinvetmab") |>
+  count(pt, name = "n11")
+
+bc <- pt_tot |>
+  left_join(pt_lib, by = "pt") |>
+  mutate(
+    n11 = replace_na(n11, 0L),
+    n1p = n_lib,
+    n10 = n1p - n11,
+    n01 = np1 - n11,
+    n00 = n_tot - n11 - n10 - n01
+  )
+
+# helper: Dirichlet via Gamma (no extra pkg)
+rdir <- function(n, alpha) {
+  X <- matrix(rgamma(n*length(alpha), shape=alpha), nrow=n)
+  X / rowSums(X)
+}
+
+# IC & 95% floor with Jeffreys prior Dirichlet(½,½,½,½)
+
+bc_ic <- function(a,b,c,d, S=20000L){
+  P  <- rdir(S, c(a,b,c,d) + 0.5)      # Jeffreys prior
+  p11 <- P[,1]; p10 <- P[,2]; p01 <- P[,3]
+  pd  <- p11 + p10; pe <- p11 + p01
+  IC  <- log2(p11 / (pd * pe))
+  tibble(
+    IC       = mean(IC),
+    IC_floor = quantile(IC, 0.025, na.rm = TRUE)
+  )
+}
+
+bcpnn <- bc |>
+  rowwise() |>
+  mutate(stats = list(bc_ic(n11, n10, n01, n00))) |>
+  unnest_wider(stats) |>
+  ungroup() 
+
+sig_bcpnn <- filter(bcpnn, n11 >= 3, IC_floor >= 0)
 
 # --------------------- 2) ORGAN SYSTEM DISPROPORTIONALITY ---------------------
 
@@ -139,8 +263,8 @@ organ_matrix <- matched |>
   mutate(value = 1) |>
   pivot_wider(names_from = organ, values_from = value, values_fill = 0)
 
-# Function to calculate PRR for one organ system (similar as HLT one above)
-calc_prop_dpa <- function(organ_col, df, test_drug = "librela") {
+# Function to calculate PRR for one organ system (similar as pt one above)
+calc_prop_dpa <- function(organ_col, df, test_drug = "bedinvetmab") {
   df_bin <- df |>
     mutate(
       has_reaction = .data[[organ_col]] == 1,
@@ -158,7 +282,7 @@ calc_prop_dpa <- function(organ_col, df, test_drug = "librela") {
   
   tibble(
     organ = organ_col,
-    librela_prop = a / n_test,
+    bedinvetmab_prop = a / n_test,
     other_prop = b / n_other,
     prr = prr
   )
@@ -173,18 +297,18 @@ organ_dpa |>
   arrange(desc(prr)) |>
   mutate(
     prr = round(prr, 2),
-    librela_prop = percent(librela_prop, 0.1),
+    bedinvetmab_prop = percent(bedinvetmab_prop, 0.1),
     other_prop = percent(other_prop, 0.1),
     Highlight = prr >= 2
   ) |>
   gt() |>
   tab_header(
-    title = "Organ System Disproportionality: Librela vs Others",
+    title = "Organ System Disproportionality: bedinvetmab vs Others",
     subtitle = "Proportion of dogs with any reaction in each system"
   ) |>
   cols_label(
     organ = "Organ System",
-    librela_prop = "Librela %",
+    bedinvetmab_prop = "bedinvetmab %",
     other_prop = "Other Drugs %",
     prr = "PRR"
   ) |>
@@ -215,7 +339,7 @@ dog_pt <- matched |>
   distinct()
 
 # Function to calculate PRR for individual PT
-calc_dpa_pt <- function(term, df, test_drug = "librela") {
+calc_dpa_pt <- function(term, df, test_drug = "bedinvetmab") {
   df_bin <- df |>
     mutate(
       has_pt = pt == term,
@@ -235,7 +359,7 @@ calc_dpa_pt <- function(term, df, test_drug = "librela") {
   
   tibble(
     pt = str_to_title(term),
-    librela_prop = a / n_test,
+    bedinvetmab_prop = a / n_test,
     other_prop = b / n_other,
     prr = prr
   )
@@ -248,18 +372,18 @@ pt_dpa |>
   arrange(desc(prr)) |>
   mutate(
     prr = round(prr, 2),
-    librela_prop = percent(librela_prop, 0.1),
+    bedinvetmab_prop = percent(bedinvetmab_prop, 0.1),
     other_prop = percent(other_prop, 0.1),
     Highlight = prr >= 2
   ) |>
   gt() |>
   tab_header(
     title = "Disproportionality Analysis of Selected Preferred Terms",
-    subtitle = "Librela vs Other Drugs (Dog-level)"
+    subtitle = "bedinvetmab vs Other Drugs (Dog-level)"
   ) |>
   cols_label(
     pt = "Preferred Term (PT)",
-    librela_prop = "Librela %",
+    bedinvetmab_prop = "bedinvetmab %",
     other_prop = "Other Drugs %",
     prr = "PRR"
   ) |>
@@ -282,7 +406,7 @@ organ_dpa_nopoly |>
   arrange(desc(prr)) |>
   mutate(
     prr = round(prr, 2),
-    librela_prop = percent(librela_prop, 0.1),
+    bedinvetmab_prop = percent(bedinvetmab_prop, 0.1),
     other_prop = percent(other_prop, 0.1),
     Highlight = prr >= 2
   ) |>
@@ -293,7 +417,7 @@ organ_dpa_nopoly |>
   ) |>
   cols_label(
     organ = "Organ System",
-    librela_prop = "Librela %",
+    bedinvetmab_prop = "bedinvetmab %",
     other_prop = "Other Drugs %",
     prr = "PRR"
   ) |>
@@ -325,7 +449,7 @@ pt_df <- matched |>
 
 ## 2) Helper to compute 2×2, PRR, chi-square, EBGM/EB05 ------------------
 
-dpa_one_pt <- function(df, term, test_drug = "librela") {
+dpa_one_pt <- function(df, term, test_drug = "bedinvetmab") {
   x <- df |>
     mutate(is_test = drug == test_drug,
            has_pt  = pt == term) |>
@@ -361,9 +485,9 @@ dpa_one_pt <- function(df, term, test_drug = "librela") {
 
 ## 3) Run across all PTs present for test drug ----------------------------
 
-pts <- pt_df |> filter(str_to_lower(drug) == "librela") |> distinct(pt) |> pull(pt)
+pts <- pt_df |> filter(str_to_lower(drug) == "bedinvetmab") |> distinct(pt) |> pull(pt)
 
-pt_dpa <- map_dfr(pts, ~ dpa_one_pt(pt_df, .x, test_drug = "librela")) |>
+pt_dpa <- map_dfr(pts, ~ dpa_one_pt(pt_df, .x, test_drug = "bedinvetmab")) |>
   mutate(
     signal_PRR = (A >= 3) & (PRR >= 2) & (ChiSq >= 4),
     signal_EB  = EB05 >= 2,

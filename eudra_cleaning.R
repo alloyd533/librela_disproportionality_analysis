@@ -7,7 +7,7 @@ library(lubridate)
 # 2) Concatenate into a single dataframe ---------------------------------------
 
 # Define drug names
-drugs <- c("librela", "metacam", "previcox", "galliprant", "rimadyl", "onsior", "daxocox")
+drugs <- c("bedinvetmab", "meloxicam", "carprofen", "firocoxib", "enflicoxib", "grapiprant", "robenacoxib")
 
 # List all yearly CSV files
 file_list <- list.files("data/raw", pattern = "^\\d{4}_eudra_.*\\.csv$", full.names = TRUE)
@@ -68,11 +68,6 @@ complete <- bind_rows(mget(drugs))
 
 # Save combined dog-level, reaction-wide dataset
 write_csv(complete, "data/complete_combined_clean.csv")
-for (drug in drugs) {
-  df <- get(drug)
-  df_clean <- fx_filter_combine(df, drug)
-  assign(drug, df_clean)
-}
 
 # 3) Lengthen dataframe --------------------------------------------------------
 
@@ -133,7 +128,7 @@ hlt_prop_wide <- hlt_props_filtered %>%
     values_from = prop,
     values_fill = 0
   ) 
-  
+
 require(gt)
 # Create nicely formatted gt table
 hlt_prop_wide %>%
@@ -174,7 +169,7 @@ organ_level <- matched %>%
     Neuro = as.integer(any(str_detect(organ, regex("neurological", ignore_case = TRUE)))),
     .groups = "drop"
   ) 
-  
+
 organ_table <- organ_level %>%
   group_by(drug) %>%
   summarise(
