@@ -131,7 +131,6 @@ if (!target_drug %in% available_drugs) {
 
 # Set analysis parameters
 min_reports <- 3  # Minimum number of reports for signal detection
-confidence_level <- 0.95
 
 # Create dog-level dataset (one row per dog per PT per drug)
 dog_pt <- matched %>%
@@ -256,11 +255,11 @@ mgps_processed <- processRaw(
 
 # Hyperparameter estimation
 theta_initial <- data.frame(
-  alpha1 = c(0.5, 1.0, 1.5),
-  beta1 = c(0.5, 1.0, 1.5), 
-  alpha2 = c(2, 3, 4),
-  beta2 = c(2, 3, 4),
-  p = c(0.1, 0.2, 0.3)
+  alpha1 = c(0.5, 1.0),
+  beta1 = c(0.5, 1.0), 
+  alpha2 = c(2, 3),
+  beta2 = c(2, 3),
+  p = c(0.1, 0.2)
 )
 
 mgps_hyperparameters <- autoHyper(
@@ -394,8 +393,7 @@ message("🔄 Integrating signals across all methods...")
 
 # Combine all PT-level results
 integrated_results <- prr_results %>%
-  select(pt, prr_signal = disproportionality_signal, prr_value = prr, 
-         prr_ci_lower, prr_ci_upper, chi_square) %>%
+  select(pt, prr_signal = disproportionality_signal, prr_value = prr, chi_square) %>%
   full_join(
     mgps_signals %>% select(pt, mgps_signal, ebgm, eb05, eb95),
     by = "pt"
@@ -461,8 +459,6 @@ results_table <- integrated_results %>%
   filter(any_method_signal) %>%
   mutate(
     prr_display = ifelse(is.na(prr_value), "—", as.character(round(prr_value, 2))),
-    prr_ci_display = ifelse(is.na(prr_ci_lower), "—", 
-                            paste0("(", round(prr_ci_lower, 2), "-", round(prr_ci_upper, 2), ")")),
     chi_display = ifelse(is.na(chi_square), "—", as.character(round(chi_square, 1))),
     ebgm_display = ifelse(is.na(ebgm), "—", as.character(round(ebgm, 2))),
     eb05_display = ifelse(is.na(eb05), "—", as.character(round(eb05, 2))),
@@ -471,59 +467,66 @@ results_table <- integrated_results %>%
   ) %>%
   select(
     PT = pt,
-    Methods = methods_detecting,
     PRR = prr_display,
-    `PRR 95% CI` = prr_ci_display,
     `Chi-square` = chi_display,
-    EBGM = ebgm_display,
     EB05 = eb05_display,
-    IC = ic_display,
-    `IC Lower` = ic_lower_display,
-    Consensus = consensus_signal
+    `IC Floor` = ic_lower_display,
   ) %>%
-  slice_head(n = 50)  # Top 50 signals
+  slice_head(n = 20)  # Top 50 signals
 
 # Create publication table
-publication_table <- results_table %>%
+top_20_pts_table <- results_table %>%
   gt() %>%
   tab_header(
     title = paste("Pharmacovigilance Signal Detection Results:", str_to_title(target_drug)),
     subtitle = "Multi-Method Disproportionality Analysis - Ranked by Signal Strength"
   ) %>%
   tab_source_note(
-    source_note = paste("Analysis date:", Sys.Date(), "| Minimum reports:", min_reports, 
+    source_note = paste("Minimum reports:", min_reports, 
                         "| Signal thresholds: PRR≥2 & χ²≥4, EB05≥2, IC₀₂₅>0")
   ) %>%
   cols_label(
     PT = "Preferred Term",
-    Methods = "Methods",
     PRR = "PRR",
-    `PRR 95% CI` = "95% CI",
     `Chi-square` = "χ²", 
-    EBGM = "EBGM",
     EB05 = "EB05",
-    IC = "IC",
-    `IC Lower` = "IC₀₂₅",
-    Consensus = "Consensus"
+    `IC Floor` = "IC Floor",
   ) %>%
-  tab_style(
+  tab_style(style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), locations = cells_body()) %>%
+  tab_style(style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), locations = cells_column_labels()) %>%
+  # Bold PTs with signals
+  tab_style(style = cell_text(weight = "bold"), locations = cells_body(columns = PT, rows = which(results_table_data$has_signal))) %>%
+  # Uniform red highlighting for all significant values
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = PRR, rows = which(results_table_data$prr_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = `Chi-square`, rows = which(results_table_data$chi_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = EB05, rows = which(results_table_data$eb05_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = `IC Floor`, rows = which(results_table_data$ic_significant))) %>%
+  cols_align(align = "center", columns = c(Reports, PRR, `Chi-square`, EB05, `IC Floor`)) %>%
+  cols_align(align = "left", columns = `Preferred Term`) %>%
+  tab_options(table.font.names = "Arial", table.font.size = 12) %>%
+  tab_footnote(footnote = "Red highlighting indicates significant values", 
+               locations = cells_column_labels(columns = c(PRR, `Chi-square`, EB05, `IC Floor`)))
+  
+
+
+tab_style(
     style = cell_fill(color = "#FFE6E6"),
     locations = cells_body(rows = Consensus == TRUE)
   ) %>%
   tab_style(
     style = cell_text(weight = "bold"),
-    locations = cells_body(columns = PT, rows = Consensus == TRUE)
+    locations = cells_body(columns = PT)
   ) %>%
   cols_align(
     align = "center",
-    columns = c(Methods, PRR, `Chi-square`, EBGM, EB05, IC, `IC Lower`, Consensus)
-  ) %>%
-  tab_footnote(
-    footnote = "Consensus signals detected by ≥2 methods (highlighted). Ranked by composite signal strength.",
-    locations = cells_column_labels(columns = Consensus)
+    columns = c(PRR, `Chi-square`, EB05, `IC Floor`,)
   )
 
-publication_table
+top_20_pts_table
 
 # Save results
 write_csv(integrated_results, here("output", "integrated_signal_results.csv"))
@@ -549,122 +552,116 @@ message("✓ Results output complete")
 
 message("📋 Creating top reported PTs table...")
 
-# Create table of top 20 most reported PTs for target drug
-top_pts_data <- dog_pt %>%
-  filter(drug == target_drug) %>%
-  group_by(pt) %>%
-  summarise(
-    n_dogs = n_distinct(dog_id),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(n_dogs)) %>%
-  slice_head(n = 20) %>%
-  mutate(
-    rank = row_number(),
-    percentage = round(n_dogs / denominators$n_target * 100, 1),
-    pt_clean = str_to_title(pt)  # Clean up PT formatting
-  )
-
-# Create publication-quality table
-top_pts_table <- top_pts_data %>%
-  select(
-    Rank = rank,
-    `Preferred Term` = pt_clean,
-    `Dogs Affected` = n_dogs,
-    `Percentage` = percentage
-  ) %>%
-  gt() %>%
-  tab_header(
-    title = paste("Top 20 Reported Adverse Reactions:", str_to_title(target_drug)),
-    subtitle = paste("Most frequently reported Preferred Terms (N =", 
-                     format(denominators$n_target, big.mark = ","), "dogs)")
-  ) %>%
-  tab_source_note(
-    source_note = paste("Analysis date:", Sys.Date(), "| Percentage of total dogs receiving", str_to_title(target_drug))
-  ) %>%
-  cols_label(
-    Rank = "Rank",
-    `Preferred Term` = "Preferred Term",
-    `Dogs Affected` = "Dogs Affected",
-    Percentage = "% of Dogs"
-  ) %>%
-  fmt_number(
-    columns = `Dogs Affected`,
-    decimals = 0,
-    use_seps = TRUE
-  ) %>%
-  fmt_number(
-    columns = Percentage,
-    decimals = 1,
-    pattern = "{x}%"
-  ) %>%
-  # Financial Times inspired styling
-  tab_style(
-    style = list(
-      cell_fill(color = "#fff1e5"),
-      cell_text(color = "#2d2d2d")
-    ),
-    locations = cells_body()
-  ) %>%
-  tab_style(
-    style = list(
-      cell_fill(color = "#f2e6dd"),
-      cell_text(weight = "bold", color = "#2d2d2d")
-    ),
-    locations = cells_column_labels()
-  ) %>%
-  tab_style(
-    style = list(
-      cell_fill(color = "#e8ddd4"),
-      cell_text(weight = "bold", color = "#1a1a1a")
-    ),
-    locations = cells_title()
-  ) %>%
-  tab_style(
-    style = cell_text(color = "#555555"),
-    locations = cells_source_notes()
-  ) %>%
-  # Highlight top 5 rows
-  tab_style(
-    style = list(
-      cell_fill(color = "#ffe6e6"),
-      cell_text(weight = "bold")
-    ),
-    locations = cells_body(rows = 1:5)
-  ) %>%
-  cols_align(
-    align = "center",
-    columns = c(Rank, `Dogs Affected`, Percentage)
-  ) %>%
-  cols_align(
-    align = "left", 
-    columns = `Preferred Term`
-  ) %>%
-  tab_options(
-    table.font.names = "Arial",
-    table.font.size = 12,
-    heading.title.font.size = 16,
-    heading.subtitle.font.size = 12,
-    column_labels.font.weight = "bold",
-    table.border.top.style = "none",
-    table.border.bottom.style = "none",
-    column_labels.border.bottom.width = 2,
-    column_labels.border.bottom.color = "#d62728"
-  )
-
-# Display the table
-top_pts_table
-
-# Save the table
-gtsave(top_pts_table, here("output", "tables", "top_20_dpa.html"))
-
-# Also create a simple CSV version for further analysis
-write_csv(top_pts_data %>% select(-pt_clean), 
-          here("output", "tables", "top_20_dpa.csv"))
-
-cat("\n=== TOP 5 PREFERRED TERMS ===\n")
-cat("Drug:", str_to_title(target_drug), "\n")
-print(top_pts_data %>% slice_head(n = 5) %>% select(rank, pt, n_dogs, percentage))
+# # Create table of top 20 most reported PTs for target drug
+# top_pts_data <- dog_pt %>%
+#   filter(drug == target_drug) %>%
+#   group_by(pt) %>%
+#   summarise(
+#     n_dogs = n_distinct(dog_id),
+#     .groups = "drop"
+#   ) %>%
+#   arrange(desc(n_dogs)) %>%
+#   slice_head(n = 20) %>%
+#   mutate(
+#     rank = row_number(),
+#     percentage = round(n_dogs / denominators$n_target * 100, 1),
+#     pt_clean = str_to_title(pt)  # Clean up PT formatting
+#   )
+# 
+# # Create publication-quality table
+# top_pts_table <- top_pts_data %>%
+#   select(
+#     Rank = rank,
+#     `Preferred Term` = pt_clean,
+#     `Dogs Affected` = n_dogs,
+#     `Percentage` = percentage
+#   ) %>%
+#   gt() %>%
+#   tab_header(
+#     title = paste("Top 20 Reported Adverse Reactions:", str_to_title(target_drug)),
+#     subtitle = paste("Most frequently reported Preferred Terms (N =", 
+#                      format(denominators$n_target, big.mark = ","), "dogs)")
+#   ) %>%
+#   tab_source_note(
+#     source_note = paste("Analysis date:", Sys.Date(), "| Percentage of total dogs receiving", str_to_title(target_drug))
+#   ) %>%
+#   cols_label(
+#     Rank = "Rank",
+#     `Preferred Term` = "Preferred Term",
+#     `Dogs Affected` = "Dogs Affected",
+#     Percentage = "% of Dogs"
+#   ) %>%
+#   fmt_number(
+#     columns = `Dogs Affected`,
+#     decimals = 0,
+#     use_seps = TRUE
+#   ) %>%
+#   fmt_number(
+#     columns = Percentage,
+#     decimals = 1,
+#     pattern = "{x}%"
+#   ) %>%
+#   # Financial Times inspired styling
+#   tab_style(
+#     style = list(
+#       cell_fill(color = "#fff1e5"),
+#       cell_text(color = "#2d2d2d")
+#     ),
+#     locations = cells_body()
+#   ) %>%
+#   tab_style(
+#     style = list(
+#       cell_fill(color = "#f2e6dd"),
+#       cell_text(weight = "bold", color = "#2d2d2d")
+#     ),
+#     locations = cells_column_labels()
+#   ) %>%
+#   tab_style(
+#     style = list(
+#       cell_fill(color = "#e8ddd4"),
+#       cell_text(weight = "bold", color = "#1a1a1a")
+#     ),
+#     locations = cells_title()
+#   ) %>%
+#   tab_style(
+#     style = cell_text(color = "#555555"),
+#     locations = cells_source_notes()
+#   ) %>%
+#   # Highlight top 5 rows
+#   tab_style(
+#     style = list(
+#       cell_fill(color = "#ffe6e6"),
+#       cell_text(weight = "bold")
+#     ),
+#     locations = cells_body(rows = 1:5)
+#   ) %>%
+#   cols_align(
+#     align = "center",
+#     columns = c(Rank, `Dogs Affected`, Percentage)
+#   ) %>%
+#   cols_align(
+#     align = "left", 
+#     columns = `Preferred Term`
+#   ) %>%
+#   tab_options(
+#     table.font.names = "Arial",
+#     table.font.size = 12,
+#     heading.title.font.size = 16,
+#     heading.subtitle.font.size = 12,
+#     column_labels.font.weight = "bold",
+#     table.border.top.style = "none",
+#     table.border.bottom.style = "none",
+#     column_labels.border.bottom.width = 2,
+#     column_labels.border.bottom.color = "#d62728"
+#   )
+# 
+# # Display the table
+# top_pts_table
+# 
+# # Save the table
+# gtsave(top_pts_table, here("output", "tables", "top_20_dpa.html"))
+# 
+# # Also create a simple CSV version for further analysis
 
 message("✓ Top PTs table created and saved")
 
@@ -730,7 +727,73 @@ publication_table <- results_table_data %>%
 
 publication_table
 
+gtsave(publication_table, here("output", "tables", "signal_detection_summary.html"))
 
+message("✓ Results output complete")
+
+# Top 20 PTs by significance
+top_pts_by_dpa <- dog_pt %>%
+  filter(drug == target_drug) %>%
+  group_by(pt) %>%
+  summarise(n_reports = n_distinct(dog_id), .groups = "drop")
+
+# Join with signal results
+results_table_data <- top_pts_by_dpa %>%
+  left_join(integrated_results, by = "pt") %>%
+  arrange(desc(prr_value)) %>%
+  slice_head(n = 20) %>%
+  mutate(
+    prr_display = ifelse(is.na(prr_value), "—", as.character(round(prr_value, 2))),
+    chi_display = ifelse(is.na(chi_square), "—", as.character(round(chi_square, 1))),
+    eb05_display = ifelse(is.na(eb05), "—", as.character(round(eb05, 2))),
+    ic_lower_display = ifelse(is.na(ic_lower), "—", as.character(round(ic_lower, 2))),
+    has_signal = any_method_signal %||% FALSE,
+    prr_significant = !is.na(prr_value) & prr_value >= 2,
+    chi_significant = !is.na(chi_square) & chi_square >= 4,
+    eb05_significant = !is.na(eb05) & eb05 >= 2,
+    ic_significant = !is.na(ic_lower) & ic_lower > 0,
+    pt_clean = str_to_title(pt)
+  )
+
+# Create publication table with uniform red highlighting
+dpa_publication_table <- results_table_data %>%
+  select(`Preferred Term` = pt_clean, Reports = n_reports, PRR = prr_display, `Chi-square` = chi_display, 
+         EB05 = eb05_display, `IC Floor` = ic_lower_display) %>%
+  gt() %>%
+  tab_header(
+    title = paste("Most Disproportionality:", str_to_title(target_drug)),
+    subtitle = "Ranked by Proportional Reporting Ratio"
+  ) %>%
+  tab_source_note(
+    source_note = paste("N =", format(denominators$n_target, big.mark = ","), 
+                        "dogs | Significant values: PRR≥2, χ²≥4, EB05≥2, IC₀₂₅>0")
+  ) %>%
+  fmt_number(columns = Reports, decimals = 0, use_seps = TRUE) %>%
+  # Base styling
+  tab_style(style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), locations = cells_body()) %>%
+  tab_style(style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), locations = cells_column_labels()) %>%
+  # Bold PTs with signals
+  tab_style(style = cell_text(weight = "bold"), locations = cells_body(columns = `Preferred Term`, rows = which(results_table_data$has_signal))) %>%
+  # Uniform red highlighting for all significant values
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = PRR, rows = which(results_table_data$prr_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = `Chi-square`, rows = which(results_table_data$chi_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = EB05, rows = which(results_table_data$eb05_significant))) %>%
+  tab_style(style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+            locations = cells_body(columns = `IC Floor`, rows = which(results_table_data$ic_significant))) %>%
+  cols_align(align = "center", columns = c(Reports, PRR, `Chi-square`, EB05, `IC Floor`)) %>%
+  cols_align(align = "left", columns = `Preferred Term`) %>%
+  tab_options(table.font.names = "Arial", table.font.size = 12) %>%
+  tab_footnote(footnote = "Red highlighting indicates significant values", 
+               locations = cells_column_labels(columns = c(PRR, `Chi-square`, EB05, `IC Floor`)))
+
+dpa_publication_table
+
+gtsave(dpa_publication_table, here("output", "tables", "top_20_dpa_summary.html"))
+
+message("✓ Results output complete")
 # ===============================================================================
 # 10. VISUALIZATION AND PLOTS
 # ===============================================================================
@@ -739,7 +802,7 @@ message("📈 Creating visualization plots...")
 
 # Prepare data for volcano plot combining PRR and BCPNN results
 volcano_data <- prr_results %>%
-  select(pt, prr, p_value, reports_target, disproportionality_signal, chi_square) %>%
+  select(pt, prr, reports_target, disproportionality_signal, chi_square) %>%
   left_join(
     bcpnn_results %>% select(pt, ic_lower),
     by = "pt"
@@ -749,16 +812,16 @@ volcano_data <- prr_results %>%
     sqrt_chi = sqrt(chi_square),
     # Color based on IC lower bound - SET FACTOR LEVELS FOR PROPER ORDER
     signal_strength = case_when(
-      !is.na(ic_lower) & ic_lower > 0 & disproportionality_signal ~ "Strong Signal (IC025 > 0 & PRR >= 2 & Chi-square >= 4)",
-      !is.na(ic_lower) & ic_lower > 0  ~ "Moderate Signal (IC025 > 0)", 
-      disproportionality_signal ~ "Disproportionality Signal Only",
+      !is.na(ic_lower) & ic_lower > 0 & disproportionality_signal ~ "Strong Signal (IC Floor > 0 & PRR >= 2 & Chi-square >= 4)",
+      disproportionality_signal ~ "Moderate Signal (PRR >= 2 & Chi-square >= 4)",
+      !is.na(ic_lower) & ic_lower > 0  ~ "IC Floor Signal Only",
       TRUE ~ "No Signal"
     ),
     # Convert to factor with proper level ordering (Strong first)
     signal_strength = factor(signal_strength, levels = c(
-      "Strong Signal (IC025 > 0 & PRR >= 2 & Chi-square >= 4)",
-      "Moderate Signal (IC025 > 0)",
-      "Disproportionality Signal Only", 
+      "Strong Signal (IC Floor > 0 & PRR >= 2 & Chi-square >= 4)",
+      "Moderate Signal (PRR >= 2 & Chi-square >= 4)",
+      "IC Floor Signal Only", 
       "No Signal"
     )),
     # Size based on number of reports (n11)
@@ -781,9 +844,9 @@ volcano_plot <- volcano_data %>%
   # Financial Times color palette
   scale_color_manual(
     values = c(
-      "Strong Signal (IC025 > 0 & PRR >= 2 & Chi-square >= 4)" = "#d62728",      # Strong red
-      "Moderate Signal (IC025 > 0)" = "#ff7f0e",    # Orange  
-      "Disproportionality Signal Only" = "#1f77b4",                # Blue
+      "Strong Signal (IC Floor > 0 & PRR >= 2 & Chi-square >= 4)" = "#d62728",      # Strong red
+      "Moderate Signal (PRR >= 2 & Chi-square >= 4)",    # Orange  
+      "IC Floor Signal Only" = "#1f77b4",                # Blue
       "No Signal" = "#2ca02c"        # Green
     )
   ) +
@@ -828,7 +891,7 @@ volcano_plot <- volcano_data %>%
   # Labels - USE EXPRESSION() FOR PROPER MATHEMATICAL NOTATION
   labs(
     title = paste("Pharmacovigilance Signal Detection:", str_to_title(target_drug)),
-    subtitle = "Proportional Reporting Ratio vs Statistical Significance\nColored by Bayesian IC confidence, sized by report count",
+    subtitle = "Proportional Reporting Ratio vs Statistical Significance (Square root of Chi-square value)\nSized by report count",
     x = expression(log[2]("Proportional Reporting Ratio")),
     y = expression(sqrt(chi^2)),
     color = "Signal Strength",
@@ -851,6 +914,8 @@ volcano_plot <- volcano_data %>%
 
 # Display the plot
 volcano_plot
+
+ggsave(here("output", "figures", "volcano_plot.png"), volcano_plot)
 
 # Signal comparison plot with Financial Times styling
 method_comparison_data <- integrated_results %>%
@@ -912,6 +977,7 @@ comparison_plot <- method_comparison_data %>%
 
 # Display the comparison plot  
 comparison_plot
+
 
 message("✓ Plots created and displayed in R environment")
 message("ℹ️  Use ggsave() to save plots if desired:")
@@ -1083,79 +1149,406 @@ message("Performing monotherapy analysis...")
 # Filter to monotherapy dogs
 dog_pt_mono <- dog_pt %>% filter(polypharmacy == "Monotherapy")
 
-# Calculate monotherapy denominators
-denominators_mono <- dog_pt_mono %>%
+mono_denominators <- dog_pt_mono %>%
   mutate(is_target = drug == target_drug) %>%
   distinct(dog_id, is_target) %>%
-  summarise(n_target = sum(is_target), n_comparator = sum(!is_target), .groups = "drop")
+  summarise(
+    n_target = sum(is_target),
+    n_comparator = sum(!is_target),
+    .groups = "drop"
+  )
 
-cat("Monotherapy - Target:", format(denominators_mono$n_target, big.mark = ","), 
-    "| Comparator:", format(denominators_mono$n_comparator, big.mark = ","), "\n")
+# Perform PRR analysis
+prr_mono_results <- dog_pt_mono%>%
+  mutate(is_target = drug == target_drug) %>%
+  distinct(dog_id, is_target, pt) %>%
+  group_by(pt) %>%
+  summarise(
+    reports_target = sum(is_target),
+    reports_comparator = sum(!is_target),
+    .groups = "drop"
+  ) %>%
+  filter(reports_target >= min_reports, reports_comparator >= min_reports) %>%
+  rowwise() %>%
+  mutate(
+    stats = list(calculate_prr_comprehensive(reports_target, mono_denominators$n_target, 
+                                             reports_comparator, mono_denominators$n_comparator))
+  ) %>%
+  unnest_wider(stats) %>%
+  ungroup() %>%
+  # Apply FDR correction
+  mutate(
+    disproportionality_signal = prr >= 2 & chi_square >= 4
+  ) %>%
+  arrange(desc(prr))
 
-# Proceed if sufficient data
-if (denominators_mono$n_target >= 10 && denominators_mono$n_comparator >= 10) {
+cat("\n=== PRR ANALYSIS RESULTS ===\n")
+cat("Total PTs analyzed:", nrow(prr_mono_results), "\n")
+cat("disproportionality signals (PRR ≥2, χ² ≥4):", sum(prr_mono_results$disproportionality_signal), "\n")
+
+message("✓ PRR analysis complete")
+
+# ===============================================================================
+# 5. MULTI-ITEM GAMMA POISSON SHRINKER (MGPS) ANALYSIS
+# ===============================================================================
+
+message("🎯 Performing unstratified MGPS analysis...")
+
+# Prepare MGPS data with stratification
+mgps_mono_data <- dog_pt_mono %>%
+  transmute(
+    id = dog_id,
+    var1 = drug,
+    var2 = pt)
+
+# Process data for MGPS
+mgps_mono_processed <- processRaw(
+  data = mgps_mono_data,
+  stratify = FALSE,
+  zeroes = FALSE
+)
+
+# Hyperparameter estimation
+theta_initial <- data.frame(
+  alpha1 = c(0.5, 1.0, 1.5),
+  beta1 = c(0.5, 1.0, 1.5), 
+  alpha2 = c(2, 3, 4),
+  beta2 = c(2, 3, 4),
+  p = c(0.1, 0.2, 0.3)
+)
+
+mgps_hyperparameters <- autoHyper(
+  data = mgps_mono_processed,
+  theta_init = theta_initial,
+  squashed = FALSE
+)
+
+# Calculate EBGM scores
+mgps_mono_results <- ebScores(
+  processed = mgps_mono_processed,
+  hyper_estimate = mgps_hyperparameters,
+  quantiles = c(5, 95)
+)
+
+# Extract target drug results
+mgps_mono_signals <- mgps_mono_results$data %>%
+  filter(var1 == target_drug) %>%
+  transmute(
+    pt = var2,
+    n_observed = N,
+    n_expected = E,
+    relative_risk = RR,
+    prr_mgps = PRR,
+    ebgm = EBGM,
+    eb05 = QUANT_05,
+    eb95 = QUANT_95,
+    mgps_signal = n_observed >= min_reports & eb05 >= 2
+  ) %>%
+  arrange(desc(eb05))
+
+cat("\n=== MGPS ANALYSIS RESULTS ===\n")
+cat("MGPS signals (N ≥", min_reports, ", EB05≥2):", sum(mgps_mono_signals$mgps_signal), "\n")
+
+message("✓ MGPS analysis complete")
+
+# ===============================================================================
+# 6. BAYESIAN CONFIDENCE PROPAGATION NEURAL NETWORK (BCPNN)
+# ===============================================================================
+
+message("🧠 Performing BCPNN analysis...")
+
+# Enhanced BCPNN calculation
+calculate_bcpnn_robust <- function(n11, n1p, np1, n_total, n_simulations = 50000) {
   
-  # Monotherapy PRR
-  mono_prr_results <- dog_pt_mono %>%
-    mutate(is_target = drug == target_drug) %>%
-    distinct(dog_id, is_target, pt) %>%
-    group_by(pt) %>%
-    summarise(reports_target = sum(is_target), reports_comparator = sum(!is_target), .groups = "drop") %>%
-    filter(reports_target >= min_reports, reports_comparator >= min_reports) %>%
-    rowwise() %>%
-    mutate(stats = list(calculate_prr_comprehensive(reports_target, denominators_mono$n_target, 
-                                                    reports_comparator, denominators_mono$n_comparator))) %>%
-    unnest_wider(stats) %>%
-    mutate(prr_signal = prr >= 2 & chi_square >= 4) %>%
-    arrange(desc(prr))
+  # Calculate 2x2 table
+  n10 <- n1p - n11
+  n01 <- np1 - n11
+  n00 <- n_total - n11 - n10 - n01
   
-  # Monotherapy BCPNN
-  mono_pt_totals <- dog_pt_mono %>% group_by(pt) %>% summarise(np1 = n_distinct(dog_id), .groups = "drop")
-  mono_pt_target <- dog_pt_mono %>% filter(drug == target_drug) %>% group_by(pt) %>% summarise(n11 = n_distinct(dog_id), .groups = "drop")
-  
-  mono_bcpnn_results <- mono_pt_totals %>%
-    left_join(mono_pt_target, by = "pt") %>%
-    mutate(n11 = replace_na(n11, 0)) %>%
-    filter(n11 >= min_reports) %>%
-    rowwise() %>%
-    mutate(bcpnn_stats = list(calculate_bcpnn_robust(n11, denominators_mono$n_target, np1, n_distinct(dog_pt_mono$dog_id)))) %>%
-    unnest_wider(bcpnn_stats) %>%
-    mutate(bcpnn_signal = n11 >= min_reports & ic_lower > 0) %>%
-    arrange(desc(ic_lower))
-  
-  # Integrate monotherapy results
-  mono_integrated <- mono_prr_results %>%
-    select(pt, prr_signal, prr, chi_square, reports_target) %>%
-    full_join(mono_bcpnn_results %>% select(pt, bcpnn_signal, ic, ic_lower), by = "pt") %>%
-    mutate(methods_detecting = (prr_signal %||% FALSE) + (bcpnn_signal %||% FALSE),
-           consensus_signal = methods_detecting >= 2, any_signal = methods_detecting >= 1) %>%
-    arrange(desc(methods_detecting), desc(prr))
-  
-  cat("Monotherapy signals:", sum(mono_integrated$any_signal, na.rm = TRUE), "\n")
-  
-  # Create monotherapy table
-  if (nrow(mono_integrated) > 0 && sum(mono_integrated$any_signal) > 0) {
-    mono_table <- mono_integrated %>%
-      filter(any_signal) %>%
-      mutate(pt_clean = str_to_title(pt),
-             prr_display = ifelse(is.na(prr), "—", as.character(round(prr, 2))),
-             ic_lower_display = ifelse(is.na(ic_lower), "—", as.character(round(ic_lower, 2)))) %>%
-      select(`Preferred Term` = pt_clean, Reports = reports_target, PRR = prr_display, 
-             `IC Lower` = ic_lower_display, Methods = methods_detecting, Consensus = consensus_signal) %>%
-      slice_head(n = 15) %>%
-      gt() %>%
-      tab_header(title = paste("Monotherapy Analysis:", str_to_title(target_drug)), 
-                 subtitle = paste("Signal detection in monotherapy dogs only (N =", format(denominators_mono$n_target, big.mark = ","), ")")) %>%
-      tab_style(style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), locations = cells_body()) %>%
-      tab_style(style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), locations = cells_column_labels())
-    
-    mono_table
-    write_csv(mono_integrated, here("output", "monotherapy_analysis.csv"))
-    gtsave(mono_table, here("output", "tables", "monotherapy_analysis.html"))
+  # Validate inputs
+  if (any(c(n11, n10, n01, n00) < 0)) {
+    return(list(ic = NA, ic_lower = NA, ic_upper = NA))
   }
-} else {
-  cat("Insufficient monotherapy data for analysis\n")
+  
+  tryCatch({
+    # Dirichlet sampling with Jeffreys prior
+    alpha_vec <- c(n11, n10, n01, n00) + 0.5
+    
+    # Generate Dirichlet samples using gamma property
+    gamma_samples <- matrix(
+      rgamma(n_simulations * 4, shape = rep(alpha_vec, each = n_simulations)),
+      nrow = n_simulations
+    )
+    
+    # Normalize to get probabilities
+    p_samples <- gamma_samples / rowSums(gamma_samples)
+    
+    # Calculate Information Component
+    p11 <- p_samples[, 1]
+    p_drug <- p_samples[, 1] + p_samples[, 2]
+    p_event <- p_samples[, 1] + p_samples[, 3]
+    
+    ic_samples <- log2(p11 / (p_drug * p_event))
+    ic_samples <- ic_samples[is.finite(ic_samples)]
+    
+    if (length(ic_samples) == 0) {
+      return(list(ic = NA, ic_lower = NA, ic_upper = NA))
+    }
+    
+    list(
+      ic = mean(ic_samples),
+      ic_lower = quantile(ic_samples, 0.025),
+      ic_upper = quantile(ic_samples, 0.975)
+    )
+    
+  }, error = function(e) {
+    list(ic = NA, ic_lower = NA, ic_upper = NA)
+  })
 }
+
+# Prepare BCPNN analysis
+n_total_dogs <- n_distinct(dog_pt_mono$dog_id)
+n_target_dogs <- denominators$n_target
+
+pt_totals <- dog_pt_mono %>%
+  group_by(pt) %>%
+  summarise(np1 = n_distinct(dog_id), .groups = "drop")
+
+pt_target <- dog_pt_mono %>%
+  filter(drug == target_drug) %>%
+  group_by(pt) %>%
+  summarise(n11 = n_distinct(dog_id), .groups = "drop")
+
+# Calculate BCPNN
+bcpnn_mono_results <- pt_totals %>%
+  left_join(pt_target, by = "pt") %>%
+  mutate(n11 = replace_na(n11, 0)) %>%
+  filter(n11 >= min_reports) %>%
+  rowwise() %>%
+  mutate(
+    bcpnn_stats = list(calculate_bcpnn_robust(n11, n_target_dogs, np1, n_total_dogs))
+  ) %>%
+  unnest_wider(bcpnn_stats) %>%
+  ungroup() %>%
+  mutate(
+    bcpnn_signal = n11 >= min_reports & ic_lower > 0
+  ) %>%
+  arrange(desc(ic_lower))
+
+cat("\n=== BCPNN ANALYSIS RESULTS ===\n")
+cat("BCPNN signals (N≥", min_reports, ", IC025>0):", sum(bcpnn_mono_results$bcpnn_signal, na.rm = TRUE), "\n")
+
+message("✓ BCPNN analysis complete")
+
+# ===============================================================================
+# 7. SIGNAL INTEGRATION AND RANKING
+# ===============================================================================
+
+message("🔄 Integrating signals across all methods...")
+
+# Combine all PT-level results
+integrated_mono_results <- prr_mono_results %>%
+  select(pt, prr_signal = disproportionality_signal, prr_value = prr, chi_square) %>%
+  full_join(
+    mgps_mono_signals %>% select(pt, mgps_signal, ebgm, eb05, eb95),
+    by = "pt"
+  ) %>%
+  full_join(
+    bcpnn_mono_results %>% select(pt, bcpnn_signal, ic, ic_lower, ic_upper),
+    by = "pt"
+  ) %>%
+  mutate(
+    # Count methods detecting signal
+    methods_detecting = (prr_signal %||% FALSE) + 
+      (mgps_signal %||% FALSE) + 
+      (bcpnn_signal %||% FALSE),
+    
+    # Consensus signal (≥2 methods)
+    consensus_signal = methods_detecting >= 2,
+    
+    # Any method signal  
+    any_method_signal = methods_detecting >= 1,
+    
+    # Calculate composite signal strength score for ranking
+    signal_strength = case_when(
+      methods_detecting >= 2 ~ 100 + (prr_value %||% 0) + (eb05 %||% 0) + 
+        (pmax(0, ic_lower, na.rm = TRUE) * 10),
+      methods_detecting == 1 ~ 50 + (prr_value %||% 0) + (eb05 %||% 0) + 
+        (pmax(0, ic_lower, na.rm = TRUE) * 10),
+      TRUE ~ 0
+    )
+  ) %>%
+  arrange(desc(signal_strength))
+
+# Signal overlap summary
+mono_signal_summary <- tibble(
+  method = c("PRR", "MGPS", "BCPNN", "Consensus (≥2)", "Any method"),
+  n_signals = c(
+    sum(integrated_mono_results$prr_signal, na.rm = TRUE),
+    sum(integrated_mono_results$mgps_signal, na.rm = TRUE),
+    sum(integrated_mono_results$bcpnn_signal, na.rm = TRUE),
+    sum(integrated_mono_results$consensus_signal, na.rm = TRUE),
+    sum(integrated_mono_results$any_method_signal, na.rm = TRUE)
+  )
+)
+
+cat("\n=== SIGNAL INTEGRATION SUMMARY ===\n")
+print(mono_signal_summary)
+
+# Join with both full and monotherapy results
+joint_results_table_data <- top_pts_by_dpa %>%
+  left_join(integrated_results, by = "pt", suffix = c("", "_full")) %>%
+  left_join(integrated_mono_results, by = "pt", suffix = c("_full", "_mono")) %>%
+  arrange(desc(prr_value_mono)) %>%
+  slice_head(n = 20) %>%
+  mutate(
+    # Full analysis displays
+    prr_full_display = ifelse(is.na(prr_value_full), "—", as.character(round(prr_value_full, 2))),
+    chi_full_display = ifelse(is.na(chi_square_full), "—", as.character(round(chi_square_full, 1))),
+    eb05_full_display = ifelse(is.na(eb05_full), "—", as.character(round(eb05_full, 2))),
+    ic_full_display = ifelse(is.na(ic_lower_full), "—", as.character(round(ic_lower_full, 2))),
+    
+    # Monotherapy analysis displays
+    prr_mono_display = ifelse(is.na(prr_value_mono), "—", as.character(round(prr_value_mono, 2))),
+    chi_mono_display = ifelse(is.na(chi_square_mono), "—", as.character(round(chi_square_mono, 1))),
+    eb05_mono_display = ifelse(is.na(eb05_mono), "—", as.character(round(eb05_mono, 2))),
+    ic_mono_display = ifelse(is.na(ic_lower_mono), "—", as.character(round(ic_lower_mono, 2))),
+    
+    # Signal flags
+    has_signal_full = any_method_signal_full %||% FALSE,
+    has_signal_mono = any_method_signal_mono %||% FALSE,
+    
+    # Full analysis significance
+    prr_full_sig = !is.na(prr_value_full) & prr_value_full >= 2,
+    chi_full_sig = !is.na(chi_square_full) & chi_square_full >= 4,
+    eb05_full_sig = !is.na(eb05_full) & eb05_full >= 2,
+    ic_full_sig = !is.na(ic_lower_full) & ic_lower_full > 0,
+    
+    # Monotherapy significance
+    prr_mono_sig = !is.na(prr_value_mono) & prr_value_mono >= 2,
+    chi_mono_sig = !is.na(chi_square_mono) & chi_square_mono >= 4,
+    eb05_mono_sig = !is.na(eb05_mono) & eb05_mono >= 2,
+    ic_mono_sig = !is.na(ic_lower_mono) & ic_lower_mono > 0,
+    
+    pt_clean = str_to_title(pt)
+  )
+
+
+# Create publication table with dual analysis columns
+joint_dpa_publication_table <- joint_results_table_data %>%
+  select(
+    `Preferred Term` = pt_clean, 
+    Reports = n_reports,
+    # Full analysis
+    `PRR Full` = prr_full_display, 
+    `Chi-square Full` = chi_full_display, 
+    `EB05 Full` = eb05_full_display, 
+    `IC Floor Full` = ic_full_display,
+    # Monotherapy analysis
+    `PRR Mono` = prr_mono_display,
+    `Chi-square Mono` = chi_mono_display,
+    `EB05 Mono` = eb05_mono_display,
+    `IC Floor Mono` = ic_mono_display
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = paste("Most Disproportionality:", str_to_title(target_drug)),
+    subtitle = "Ranked by Proportional Reporting Ratio (Full Analysis)"
+  ) %>%
+  tab_source_note(
+    source_note = paste("N =", format(mono_denominators$n_target, big.mark = ","), 
+                        "dogs (full) | Significant values: PRR≥2, χ²≥4, EB05≥2, IC₀₂₅>0")
+  ) %>%
+  # Add column spanners
+  tab_spanner(
+    label = "Full Analysis",
+    columns = c(`PRR Full`, `Chi-square Full`, `EB05 Full`, `IC Floor Full`)
+  ) %>%
+  tab_spanner(
+    label = "Monotherapy Analysis",
+    columns = c(`PRR Mono`, `Chi-square Mono`, `EB05 Mono`, `IC Floor Mono`)
+  ) %>%
+  # Rename column labels to remove suffixes
+  cols_label(
+    `PRR Full` = "PRR",
+    `Chi-square Full` = "Chi-square",
+    `EB05 Full` = "EB05",
+    `IC Floor Full` = "IC Floor",
+    `PRR Mono` = "PRR",
+    `Chi-square Mono` = "Chi-square",
+    `EB05 Mono` = "EB05",
+    `IC Floor Mono` = "IC Floor"
+  ) %>%
+  fmt_number(columns = Reports, decimals = 0, use_seps = TRUE) %>%
+  # Base styling
+  tab_style(
+    style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), 
+    locations = cells_body()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), 
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#e8ddd4"), cell_text(weight = "bold", color = "#1a1a1a")),
+    locations = cells_column_spanners()
+  ) %>%
+  # Bold PTs with signals in either analysis
+  tab_style(
+    style = cell_text(weight = "bold"), 
+    locations = cells_body(
+      columns = `Preferred Term`, 
+      rows = which(joint_results_table_data$has_signal_full | joint_results_table_data$has_signal_mono)
+    )
+  ) %>%
+  # Full analysis highlighting
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `PRR Full`, rows = which(joint_results_table_data$prr_full_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `Chi-square Full`, rows = which(joint_results_table_data$chi_full_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `EB05 Full`, rows = which(joint_results_table_data$eb05_full_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `IC Floor Full`, rows = which(joint_results_table_data$ic_full_sig))
+  ) %>%
+  # Monotherapy analysis highlighting
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `PRR Mono`, rows = which(joint_results_table_data$prr_mono_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `Chi-square Mono`, rows = which(joint_results_table_data$chi_mono_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `EB05 Mono`, rows = which(joint_results_table_data$eb05_mono_sig))
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
+    locations = cells_body(columns = `IC Floor Mono`, rows = which(joint_results_table_data$ic_mono_sig))
+  ) %>%
+  cols_align(
+    align = "center", 
+    columns = c(Reports, `PRR Full`, `Chi-square Full`, `EB05 Full`, `IC Floor Full`,
+                `PRR Mono`, `Chi-square Mono`, `EB05 Mono`, `IC Floor Mono`)
+  ) %>%
+  cols_align(align = "left", columns = `Preferred Term`) %>%
+  tab_options(table.font.names = "Arial", table.font.size = 11) %>%
+  tab_footnote(
+    footnote = "Red highlighting indicates significant values", 
+    locations = cells_column_spanners(spanners = c("Full Analysis", "Monotherapy Analysis"))
+  )
+
+joint_dpa_publication_table
+
 # ===============================================================================
 # 12. EXECUTIVE SUMMARY AND RECOMMENDATIONS
 # ===============================================================================

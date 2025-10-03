@@ -1,5 +1,5 @@
 {
-  "cleaning_date": ["2025-09-25"],
+  "cleaning_date": ["2025-09-29"],
   "input_files": [104],
   "drugs_processed": [7],
   "initial_records": [69000],
@@ -10,5 +10,5 @@
   "unique_dogs": [68498],
   "unique_pts": [896],
   "data_quality_score": ["NA"],
-  "polypharmacy_rate": [56.8]
+  "polypharmacy_rate": [56.7]
 }

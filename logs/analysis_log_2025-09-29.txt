@@ -1,0 +1,4 @@
+Signal detection analysis started at: 2025-09-29 16:18:17.490515 
+Data Quality Summary:
+- Total records: 68498 
+- Complete duplicates removed: 502 
