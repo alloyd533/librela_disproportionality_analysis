@@ -1,0 +1,716 @@
+---
+title: "Bedinvetmab Market Analysis and Adverse Event Rates"
+author: ""
+date: "`r Sys.Date()`"
+output: 
+  word_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+
+
+rm(list = ls())
+set.seed(2612)
+
+# Set working directory to project root
+here::i_am("rate_simulation.Rmd")
+
+# Load packages (install if needed)
+required_packages <- c("tidyverse", "readxl", "here", "survival", "truncnorm", 
+                       "forcats", "viridis", "tictoc", "janitor", "scales", 
+                       "progressr", "gt", "jsonlite", "lubridate")
+
+install_if_missing <- function(packages) {
+  missing <- packages[!packages %in% rownames(installed.packages())]
+  if (length(missing) > 0) {
+    install.packages(missing, dependencies = TRUE)
+  }
+}
+
+install_if_missing(required_packages)
+invisible(lapply(required_packages, library, character.only = TRUE))
+```
+
+## Load and Filter AE Data
+
+Starting with adverse event data for bedinvetmab through June 2025. This date was chosen as it is the most recent update for the number of Bedinvetmab doses sold (>30 million).
+
+```{r load-data, include = FALSE}
+ae_df <- read_rds(here("data", "processed", "matched_data.rds")) %>%
+  filter(drug == "bedinvetmab",
+         date <= as.Date("2025-06-30"))
+```
+
+## Country-Specific Reporting Rates
+
+Using the Montiero pharmacovigilence study (2025) as a basis, they make it clear that different countries have different spontaneous reporting rates for bedinvetmab. Though they do not provide explicit units sold on a per country basis, using the spontaneous rates of reporting and the numbers of ADRs available from the EudraVigilance, one can make an informed prediction. EU countries were given the average of the known EU countries. Non-EU countries were called "Rest of World" and given the average across all countries.
+
+```{r reporting-rates, include = FALSE}
+reporting_rates <- tribble(
+  ~country_group, ~ae_per_10k_doses,
+  "United States", 18.18,
+  "United Kingdom", 14.61,
+  "Germany", 6.06,
+  "Spain", 5.41,
+  "France", 3.22,
+  "Italy", 3.22,
+  "Canada", 18.72,
+  "Australia", 13.86,
+  "EU_combined", mean(c(3.22, 6.06, 5.41, 3.22)),
+  "Rest_of_World", 9.48
+)
+```
+
+## Life Expectancy by Size and Age
+
+The Monteiro study also provided weight and and age data of the dogs reporting ADR.  Using Montoya et al. 2019 data (Supplementary Table 8) for size-specific life expectancy estimates, survival curves for the simulated population.
+
+```{r life-tables, include = FALSE}
+life_table_by_size <- tribble(
+  ~size_group, ~age_lower, ~age_upper, ~e_x_years, ~ci_lower, ~ci_upper,
+  # Toy breeds
+  "Toy", 0, 1, 13.58, 13.52, 13.63,
+  "Toy", 1, 2, 12.97, 12.92, 13.02,
+  "Toy", 2, 3, 12.09, 12.04, 12.14,
+  "Toy", 3, 4, 11.19, 11.14, 11.24,
+  "Toy", 4, 5, 10.28, 10.24, 10.33,
+  "Toy", 5, 6, 9.38, 9.34, 9.43,
+  "Toy", 6, 7, 8.49, 8.45, 8.54,
+  "Toy", 7, 8, 7.62, 7.58, 7.67,
+  "Toy", 8, 9, 6.77, 6.73, 6.81,
+  "Toy", 9, 10, 5.97, 5.92, 6.01,
+  "Toy", 10, 11, 5.22, 5.17, 5.26,
+  "Toy", 11, 12, 4.52, 4.48, 4.57,
+  "Toy", 12, 13, 3.88, 3.84, 3.93,
+  "Toy", 13, 14, 3.32, 3.28, 3.37,
+  "Toy", 14, 15, 2.85, 2.80, 2.91,
+  "Toy", 15, 16, 2.47, 2.41, 2.53,
+  "Toy", 16, 17, 2.23, 2.15, 2.31,
+  "Toy", 17, 99, 2.08, 1.97, 2.18,
+  # Small breeds
+  "Small", 0, 1, 13.79, 13.74, 13.83,
+  "Small", 1, 2, 13.02, 12.98, 13.06,
+  "Small", 2, 3, 12.10, 12.07, 12.14,
+  "Small", 3, 4, 11.18, 11.14, 11.21,
+  "Small", 4, 5, 10.26, 10.22, 10.30,
+  "Small", 5, 6, 9.35, 9.31, 9.39,
+  "Small", 6, 7, 8.44, 8.41, 8.48,
+  "Small", 7, 8, 7.56, 7.52, 7.59,
+  "Small", 8, 9, 6.69, 6.65, 6.72,
+  "Small", 9, 10, 5.88, 5.85, 5.91,
+  "Small", 10, 11, 5.11, 5.08, 5.15,
+  "Small", 11, 12, 4.41, 4.37, 4.44,
+  "Small", 12, 13, 3.76, 3.73, 3.79,
+  "Small", 13, 14, 3.20, 3.16, 3.23,
+  "Small", 14, 15, 2.73, 2.69, 2.77,
+  "Small", 15, 16, 2.36, 2.31, 2.40,
+  "Small", 16, 17, 2.10, 2.05, 2.16,
+  "Small", 17, 99, 1.97, 1.89, 2.04,
+  # Medium breeds
+  "Medium", 0, 1, 12.94, 12.88, 12.99,
+  "Medium", 1, 2, 12.14, 12.09, 12.20,
+  "Medium", 2, 3, 11.23, 11.18, 11.28,
+  "Medium", 3, 4, 10.31, 10.26, 10.36,
+  "Medium", 4, 5, 9.38, 9.33, 9.44,
+  "Medium", 5, 6, 8.49, 8.44, 8.54,
+  "Medium", 6, 7, 7.58, 7.53, 7.63,
+  "Medium", 7, 8, 6.71, 6.66, 6.76,
+  "Medium", 8, 9, 5.87, 5.82, 5.91,
+  "Medium", 9, 10, 5.09, 5.05, 5.14,
+  "Medium", 10, 11, 4.36, 4.32, 4.41,
+  "Medium", 11, 12, 3.73, 3.69, 3.77,
+  "Medium", 12, 13, 3.16, 3.11, 3.20,
+  "Medium", 13, 14, 2.69, 2.64, 2.73,
+  "Medium", 14, 15, 2.32, 2.26, 2.38,
+  "Medium", 15, 16, 2.06, 1.99, 2.13,
+  "Medium", 16, 17, 1.90, 1.80, 1.99,
+  "Medium", 17, 99, 1.90, 1.75, 2.05,
+  # Large breeds
+  "Large", 0, 1, 11.70, 11.66, 11.73,
+  "Large", 1, 2, 10.97, 10.93, 11.00,
+  "Large", 2, 3, 10.08, 10.05, 10.12,
+  "Large", 3, 4, 9.19, 9.15, 9.22,
+  "Large", 4, 5, 8.28, 8.25, 8.31,
+  "Large", 5, 6, 7.40, 7.37, 7.43,
+  "Large", 6, 7, 6.54, 6.51, 6.57,
+  "Large", 7, 8, 5.71, 5.68, 5.74,
+  "Large", 8, 9, 4.93, 4.90, 4.96,
+  "Large", 9, 10, 4.22, 4.19, 4.25,
+  "Large", 10, 11, 3.62, 3.59, 3.65,
+  "Large", 11, 12, 3.08, 3.05, 3.11,
+  "Large", 12, 13, 2.62, 2.58, 2.65,
+  "Large", 13, 14, 2.25, 2.21, 2.28,
+  "Large", 14, 15, 1.98, 1.94, 2.02,
+  "Large", 15, 16, 1.79, 1.73, 1.85,
+  "Large", 16, 17, 1.66, 1.58, 1.75,
+  "Large", 17, 99, 1.57, 1.44, 1.69,
+  # Giant breeds
+  "Giant", 0, 1, 9.70, 9.54, 9.85,
+  "Giant", 1, 2, 8.93, 8.78, 9.08,
+  "Giant", 2, 3, 8.08, 7.93, 8.23,
+  "Giant", 3, 4, 7.21, 7.06, 7.36,
+  "Giant", 4, 5, 6.37, 6.22, 6.51,
+  "Giant", 5, 6, 5.59, 5.44, 5.73,
+  "Giant", 6, 7, 4.87, 4.72, 5.01,
+  "Giant", 7, 8, 4.21, 4.07, 4.36,
+  "Giant", 8, 9, 3.64, 3.50, 3.79,
+  "Giant", 9, 10, 3.18, 3.02, 3.34,
+  "Giant", 10, 11, 2.82, 2.64, 2.99,
+  "Giant", 11, 12, 2.52, 2.31, 2.72,
+  "Giant", 12, 13, 2.32, 2.06, 2.57,
+  "Giant", 13, 99, 2.08, 1.75, 2.41
+) %>%
+  mutate(
+    sd_years = (ci_upper - ci_lower) / (2 * 1.96),
+    e_x_months = e_x_years * 12,
+    sd_months = sd_years * 12
+  )
+```
+
+## Market Composition by Country
+
+Making the assumption that there is a fixed correlation between ADR reports and market size; and knowing the country-specific reporting rates, we can back-calculate the market composition. This provides an estimate for where most doses are being used.
+
+```{r country-analysis}
+eu_countries <- c(
+  "Austria", "Belgium", "Bulgaria", "Croatia", "Czech Republic",
+  "Denmark", "Estonia", "Finland", "France", "Germany", "Greece",
+  "Hungary", "Iceland", "Ireland", "Italy", "Lithuania", "Luxembourg",
+  "Netherlands", "Norway", "Poland", "Portugal", "Slovakia", "Slovenia",
+  "Spain", "Sweden", "Switzerland", "Andorra"
+)
+
+analysis_data <- ae_df %>%
+  group_by(dog_id) %>%
+  slice(1) %>%
+  ungroup() %>%
+  group_by(country) %>%
+  summarise(n_aes = n(), .groups = "drop") %>%
+  mutate(
+    country_group = case_when(
+      country == "United States" ~ "United States",
+      country == "United Kingdom" ~ "United Kingdom", 
+      country == "Canada" ~ "Canada",
+      country == "France" ~ "France",
+      country == "Germany" ~ "Germany",
+      country == "Italy" ~ "Italy",
+      country == "Spain" ~ "Spain",
+      country == "Australia" ~ "Australia",
+      country %in% eu_countries ~ "EU_combined",
+      TRUE ~ "Rest_of_World"
+    )
+  ) %>%
+  group_by(country_group) %>%
+  summarise(total_aes = sum(n_aes), .groups = "drop") %>%
+  left_join(reporting_rates, by = "country_group") %>%
+  mutate(
+    license_date = case_when(
+      country_group == "United States" ~ as_date("2023-05-05"),
+      country_group == "United Kingdom" ~ as_date("2020-11-10"),
+      country_group == "Canada" ~ as_date("2023-03-08"),
+      country_group == "Australia" ~ as_date("2022-09-01"),
+      country_group %in% c("France", "Germany", "Italy", "Spain", "EU_combined") ~ 
+        as_date("2020-11-10"),
+      country_group == "Rest_of_World" ~ as_date("2022-01-01")
+    ),
+    estimated_doses = total_aes / (ae_per_10k_doses / 10000),
+    market_share = estimated_doses / sum(estimated_doses)
+  ) %>%
+  arrange(desc(market_share))
+
+print(analysis_data)
+```
+
+## Uptake Trends
+
+It's important to model the uptake of the drug following licensing (since there is a big variation in licensing dates around the world). 
+
+```{r empirical-uptake}
+empirical_uptake <- ae_df %>%
+  mutate(
+    year_month = floor_date(date, "month"),
+    country_group = case_when(
+      country == "United States" ~ "United States",
+      country == "United Kingdom" ~ "United Kingdom",
+      country == "Canada" ~ "Canada",
+      country == "France" ~ "France",
+      country == "Germany" ~ "Germany",
+      country == "Italy" ~ "Italy",
+      country == "Spain" ~ "Spain",
+      country == "Australia" ~ "Australia",
+      country %in% eu_countries ~ "EU_combined",
+      TRUE ~ "Rest_of_World"
+    )
+  ) %>%
+  count(country_group, year_month, name = "n_aes") %>%
+  left_join(analysis_data %>% select(country_group, license_date), by = "country_group") %>%
+  filter(year_month >= license_date) %>%
+  left_join(reporting_rates %>% select(country_group, ae_per_10k_doses), by = "country_group") %>%
+  mutate(
+    months_since_launch = as.numeric(interval(license_date, year_month) / months(1)),
+    estimated_doses = n_aes / (ae_per_10k_doses / 10000)
+  ) %>%
+  group_by(country_group) %>%
+  arrange(year_month) %>%
+  mutate(cumulative_doses = cumsum(estimated_doses)) %>%
+  ungroup()
+
+
+```
+
+ ## Logistic Growth Model
+
+ Fitting logistic curves to model market uptake over time. We fix K (carrying
+ capacity) based on expected saturation at 72 months and only fit the growth
+ rate (r) and inflection point (t0).
+
+```{r logistic-model}
+
+# Calculate K assuming 72-month saturation
+calculate_K <- function(current_cumulative, months_available) {
+  t_saturation <- 72
+  r_assumed <- 0.1
+  t0_assumed <- t_saturation / 2
+  
+  # Where should we be on S-curve now?
+  expected_prop <- 1 / (1 + exp(-r_assumed * (months_available - t0_assumed)))
+  
+  # K = current / expected_proportion
+  K_estimated <- current_cumulative / expected_prop
+  
+  return(K_estimated)
+}
+
+# Fit only r and t0 with K fixed
+fit_logistic_fixed_K <- function(data, K_fixed) {
+  max_time <- max(data$months_since_launch)
+  
+  tryCatch({
+    nls(
+      cumulative_doses ~ K_fixed / (1 + exp(-r * (months_since_launch - t0))),
+      data = data,
+      start = list(r = 0.1, t0 = max_time * 0.5),
+      control = nls.control(maxiter = 200)
+    )
+  }, error = function(e) NULL)
+}
+
+# Apply fixed-K approach
+logistic_params <- empirical_uptake %>%
+  group_by(country_group) %>%
+  summarise(
+    months_available = max(months_since_launch),
+    current = max(cumulative_doses),
+    K = calculate_K(current, months_available),
+    model = list(fit_logistic_fixed_K(cur_data(), K)),
+    r = ifelse(!is.null(model[[1]]), coef(model[[1]])["r"], 0.1),
+    t0 = ifelse(!is.null(model[[1]]), coef(model[[1]])["t0"], months_available * 0.5),
+    pct_capacity = 100 * current / K,
+    .groups = "drop"
+  )
+
+# Merge logistic params back into analysis data
+analysis_data <- analysis_data %>%
+  left_join(logistic_params, by = "country_group")
+
+print("Fixed-K logistic parameters:")
+print(logistic_params %>%
+        select(country_group, months_available, K, r, t0, pct_capacity) %>%
+        mutate(
+          K = comma(round(K)),
+          r = round(r, 3),
+          t0 = round(t0, 1),
+          pct_capacity = sprintf("%.1f%%", pct_capacity)
+        ))
+
+# Model fit quality
+validation <- empirical_uptake %>%
+  left_join(logistic_params %>% select(country_group, K, r, t0), by = "country_group") %>%
+  mutate(predicted = K / (1 + exp(-r * (months_since_launch - t0)))) %>%
+  group_by(country_group) %>%
+  summarise(r_squared = cor(cumulative_doses, predicted, use = "complete.obs")^2, .groups = "drop")
+
+print("\nR² with fixed K:")
+print(validation %>% mutate(r_squared = round(r_squared, 3)))
+
+```
+### Visualize Model Fit
+
+```{logistic-plot, fig.width=10, fig.height=6}
+
+fitted_predictions_k <- empirical_uptake %>%
+  left_join(logistic_params %>% select(country_group, K, r, t0), by = "country_group") %>%
+  filter(!is.na(K)) %>%
+  mutate(
+    fitted_doses = K / (1 + exp(-r * (months_since_launch - t0)))
+  )
+
+comparison_data_k <- fitted_predictions_k %>%
+  select(country_group, year_month, months_since_launch, 
+         empirical = cumulative_doses, fitted = fitted_doses) %>%
+  pivot_longer(cols = c(empirical, fitted), names_to = "source", values_to = "cumulative")
+
+comparison_data_k %>%
+  filter(country_group %in% c("United States", "United Kingdom", "EU_combined", "Canada")) %>%
+  ggplot(aes(x = year_month, y = cumulative, color = source)) +
+  geom_point(data = . %>% filter(source == "empirical"), size = 1.5, alpha = 0.7) +
+  geom_line(data = . %>% filter(source == "fitted"), linewidth = 1.2) +
+  facet_wrap(~country_group, scales = "free_y", ncol = 2) +
+  scale_y_continuous(labels = comma) +
+  scale_color_manual(
+    values = c("empirical" = "#E74C3C", "fitted" = "#3498DB"),
+    labels = c("Empirical (dose-corrected)", "Logistic Fit (Fixed K)")
+  ) +
+  labs(
+    title = "Logistic Model: Empirical vs Fitted",
+    subtitle = "Empirical data corrected for reporting rates",
+    x = "Date",
+    y = "Cumulative Dose-Equivalents",
+    color = ""
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top")
+```
+
+## Simulation Setup
+
+Now we'll simulate a dog population that matches our known sales figures. Key parameters:
+
+```{r simulation-params}
+# Target to match
+known_global_doses_sold <- 21000000
+cutoff_date <- as.Date("2025-06-30")
+dose_buffer_pct <- 0.10
+dropout_monthly_yr1 <- 0.03
+
+# Weight distribution (from prior analysis)
+weight_mean <- 26.06
+weight_sd <- 13.78
+
+# Size categories based on weight
+classify_size <- function(weight_kg) {
+  case_when(
+    weight_kg < 5.5 ~ "Toy",
+    weight_kg < 11 ~ "Small",
+    weight_kg < 26 ~ "Medium",
+    weight_kg < 45 ~ "Large",
+    TRUE ~ "Giant"
+  )
+}
+```
+
+## Generate Dog Population
+
+We'll iteratively generate dogs until we hit our target dose count. Each dog gets assigned:
+- Entry date (based on country market share and license dates)
+- Weight (from truncated normal distribution)
+- Age at start (uniform 1-14 years)
+- Expected survival (from life tables)
+- Treatment duration (with dropout)
+
+```{r simulate-population, cache=TRUE}
+dogs_list <- list()
+iteration <- 1
+total_doses_so_far <- 0
+target_doses_consumed <- known_global_doses_sold * (1 - dose_buffer_pct)
+
+while (total_doses_so_far < target_doses_consumed) {
+  
+  # Generate batch of dogs
+  batch_size <- ifelse(iteration == 1, 50000, 10000)
+  
+  country_probs <- analysis_data$market_share
+  names(country_probs) <- analysis_data$country_group
+  
+  batch <- tibble(
+    dog_id = paste0("dog_", (iteration - 1) * batch_size + 1:batch_size),
+    country_group = sample(names(country_probs), batch_size, 
+                          replace = TRUE, prob = country_probs),
+    weight_kg = rtruncnorm(batch_size, a = 1, b = 100, 
+                          mean = weight_mean, sd = weight_sd),
+    size_group = classify_size(weight_kg),
+    age_at_start = runif(batch_size, 1, 14)
+  ) %>%
+    left_join(analysis_data %>% select(country_group, license_date), 
+             by = "country_group")
+  
+  # Sample entry dates weighted toward early periods
+  batch <- batch %>%
+    rowwise() %>%
+    mutate(
+      days_since_launch = as.numeric(cutoff_date - license_date),
+      # Beta distribution for entry timing
+      entry_quantile = rbeta(1, 1.5, 3),
+      days_after_launch = round(entry_quantile * days_since_launch),
+      entry_date = license_date + days(days_after_launch)
+    ) %>%
+    ungroup() %>%
+    select(-days_since_launch, -entry_quantile, -days_after_launch)
+  
+  # Lookup life expectancy
+  batch <- batch %>%
+    mutate(age_group_lower = floor(age_at_start)) %>%
+    left_join(
+      life_table_by_size %>% 
+        select(size_group, age_lower, e_x_months, sd_months),
+      by = c("size_group", "age_group_lower" = "age_lower")
+    ) %>%
+    mutate(
+      survival_months = rtruncnorm(n(), a = 1, b = Inf, 
+                                  mean = e_x_months, sd = sd_months),
+      death_date = entry_date + months(round(survival_months))
+    )
+  
+  # Calculate treatment duration with dropout
+  batch <- batch %>%
+    rowwise() %>%
+    mutate(
+      months_available = as.numeric(
+        interval(entry_date, min(death_date, cutoff_date)) / months(1)
+      ),
+      # Dropout in first year only
+      first_year_months = min(months_available, 12),
+      dropout_months = sum(runif(first_year_months) < dropout_monthly_yr1),
+      treatment_months = months_available - dropout_months,
+      treatment_months = max(0, treatment_months),
+      doses_by_cutoff = treatment_months
+    ) %>%
+    ungroup()
+  
+  dogs_list[[iteration]] <- batch
+  total_doses_so_far <- sum(map_dbl(dogs_list, ~sum(.x$doses_by_cutoff)))
+  
+  iteration <- iteration + 1
+  if (iteration > 100) break  # safety valve
+}
+
+dogs_final <- bind_rows(dogs_list)
+
+# Trim to exact target
+dogs_final <- dogs_final %>%
+  arrange(entry_date) %>%
+  mutate(cumulative_doses = cumsum(doses_by_cutoff)) %>%
+  filter(cumulative_doses <= target_doses_consumed) %>%
+  select(-cumulative_doses)
+```
+
+## Results by Country
+
+```{r country-summary}
+country_summary <- dogs_final %>%
+  group_by(country_group) %>%
+  summarise(
+    n_dogs = n(),
+    total_doses_consumed = sum(doses_by_cutoff),
+    mean_age = mean(age_at_start),
+    mean_weight = mean(weight_kg),
+    median_weight = median(weight_kg),
+    mean_duration = mean(doses_by_cutoff),
+    median_duration = median(doses_by_cutoff),
+    .groups = "drop"
+  ) %>%
+  left_join(analysis_data %>% select(country_group, total_aes), 
+           by = "country_group") %>%
+  mutate(
+    total_doses_with_buffer = total_doses_consumed / (1 - dose_buffer_pct),
+    ae_per_1000_dogs = total_aes / n_dogs * 1000
+  ) %>%
+  arrange(desc(n_dogs))
+
+country_summary %>%
+  select(country_group, n_dogs, mean_weight, mean_age, mean_duration, 
+         total_aes, ae_per_1000_dogs) %>%
+  mutate(
+    n_dogs = comma(n_dogs),
+    across(c(mean_weight, mean_age, mean_duration, ae_per_1000_dogs), ~round(., 1))
+  ) %>%
+  knitr::kable(caption = "Summary by Country/Region")
+```
+
+## Results by Size Group
+
+Interesting to see how the different size categories break down.
+
+```{r size-summary}
+size_summary <- dogs_final %>%
+  group_by(size_group) %>%
+  summarise(
+    n_dogs = n(),
+    pct_of_total = 100 * n() / nrow(dogs_final),
+    mean_weight = mean(weight_kg),
+    mean_age = mean(age_at_start),
+    mean_survival = mean(survival_months / 12),
+    mean_treatment = mean(treatment_months),
+    mean_doses = mean(doses_by_cutoff),
+    .groups = "drop"
+  ) %>%
+  arrange(factor(size_group, levels = c("Toy", "Small", "Medium", "Large", "Giant")))
+
+size_summary %>%
+  mutate(across(where(is.numeric), ~round(., 1))) %>%
+  mutate(n_dogs = comma(n_dogs)) %>%
+  knitr::kable(caption = "Summary by Size Group")
+```
+
+## Global Summary
+
+```{r global-summary}
+total_dogs <- nrow(dogs_final)
+total_doses <- sum(dogs_final$doses_by_cutoff)
+total_doses_with_buffer <- total_doses / (1 - dose_buffer_pct)
+total_aes <- sum(country_summary$total_aes, na.rm = TRUE)
+
+cat(sprintf("
+GLOBAL SUMMARY
+==============
+
+Dogs simulated: %s
+Total doses consumed: %s
+With 10%% buffer: %s
+Target (known sales): %s
+Accuracy: %.3f%%
+
+Population characteristics:
+  Mean weight: %.1f kg (median: %.1f kg)
+  Mean age at start: %.1f years
+  Mean treatment duration: %.1f months
+
+Size distribution:
+  Toy: %.1f%%
+  Small: %.1f%%
+  Medium: %.1f%%
+  Large: %.1f%%
+  Giant: %.1f%%
+
+Adverse events:
+  Total reports: %s
+  Rate per 1,000 dogs: %.1f
+  Rate per 10,000 doses: %.1f
+",
+  comma(total_dogs),
+  comma(round(total_doses)),
+  comma(round(total_doses_with_buffer)),
+  comma(known_global_doses_sold),
+  100 * abs(total_doses_with_buffer - known_global_doses_sold) / known_global_doses_sold,
+  mean(dogs_final$weight_kg),
+  median(dogs_final$weight_kg),
+  mean(dogs_final$age_at_start),
+  mean(dogs_final$doses_by_cutoff),
+  100 * mean(dogs_final$size_group == "Toy"),
+  100 * mean(dogs_final$size_group == "Small"),
+  100 * mean(dogs_final$size_group == "Medium"),
+  100 * mean(dogs_final$size_group == "Large"),
+  100 * mean(dogs_final$size_group == "Giant"),
+  comma(total_aes),
+  total_aes / total_dogs * 1000,
+  total_aes / total_doses_with_buffer * 10000
+))
+```
+
+## ADR Rates by Country
+
+Now let's calculate adverse drug reaction rates by preferred term (PT) across countries.
+
+```{r adr-rates}
+exposure_summary <- dogs_final %>%
+  count(country_group, name = "n_exposed")
+
+adr_summary <- ae_df %>%
+  mutate(country_group = case_when(
+    country == "United States" ~ "United States",
+    country == "United Kingdom" ~ "United Kingdom",
+    country == "Canada" ~ "Canada",
+    country == "France" ~ "France",
+    country == "Germany" ~ "Germany",
+    country == "Italy" ~ "Italy",
+    country == "Spain" ~ "Spain",
+    country == "Australia" ~ "Australia",
+    country %in% eu_countries ~ "EU_combined",
+    TRUE ~ "Rest_of_World"
+  )) %>%
+  count(country_group, pt, name = "n_adrs")
+
+adr_rates <- adr_summary %>%
+  left_join(exposure_summary, by = "country_group") %>%
+  mutate(rate_per_10000 = 10000 * n_adrs / n_exposed)
+
+# Top 20 ADRs globally (excluding lack of efficacy)
+top_pts <- adr_rates %>%
+  filter(pt != "Lack of efficacy") %>%
+  group_by(pt) %>%
+  summarise(total_adrs = sum(n_adrs, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(total_adrs, n = 20) %>%
+  pull(pt)
+
+adr_top10 <- adr_rates %>%
+  filter(pt %in% top_pts, pt != "Lack of efficacy")
+```
+
+## Heatmap of Top ADRs
+
+```{r heatmap, fig.width=10, fig.height=8}
+adr_plot <- adr_top10 %>%
+  mutate(
+    pt = str_to_title(pt) |> str_replace_all("_", " "),
+    country_group = str_replace_all(country_group, "_", " ") |> str_to_title(),
+    pt = fct_reorder(pt, -n_adrs),
+    country_group = fct_reorder(country_group, n_exposed),
+    text_color = ifelse(rate_per_10000 > 15, "white", "black")
+  )
+
+ggplot(adr_plot, aes(x = country_group, y = pt, fill = rate_per_10000)) +
+  geom_tile(color = "grey85", linewidth = 0.4) +
+  geom_text(
+    aes(label = sprintf("%.1f", rate_per_10000), color = text_color),
+    size = 3,
+    fontface = "bold"
+  ) +
+  scale_color_identity() +
+  scale_fill_viridis_c(
+    option = "plasma",
+    direction = -1,
+    name = "ADR rate\n(per 10,000 dogs)",
+    labels = label_number(accuracy = 1)
+  ) +
+  scale_x_discrete(position = "top", name = "Country or Region") +
+  scale_y_discrete(name = "Adverse Reaction (Preferred Term)") +
+  labs(
+    title = "Top 10 Adverse Drug Reaction Rates by Country or Region",
+    subtitle = "Rates calculated using simulated exposure denominators (per 10,000 dogs)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 11, vjust = 0.5),
+    axis.text.y = element_text(face = "bold", size = 11),
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(2.5, "cm"),
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 15, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    plot.margin = margin(10, 20, 10, 10)
+  )
+```
+
+## Notes
+
+Key assumptions in this analysis:
+
+- Weight distribution: truncated normal (mean=26.06kg, sd=13.78kg, range 1-100kg)
+- Life expectancy: size-specific curves from Montoya et al. 2024
+- Treatment dropout: 3% monthly in first year, 0% thereafter
+- Dose buffer: 10% (accounting for wastage, stockpiling, etc.)
+- Cutoff date: June 30, 2025
+
+The simulation successfully matches known global sales within `r round(100 * abs(total_doses_with_buffer - known_global_doses_sold) / known_global_doses_sold, 3)`%.
+
+```{r save-results, eval=FALSE}
+# Uncomment to save results
+# write_rds(dogs_final, here("output", "simulated_dogs_with_size.rds"))
+# write_csv(size_summary, here("output", "size_summary.csv"))
+# write_csv(country_summary, here("output", "country_summary.csv"))
+```

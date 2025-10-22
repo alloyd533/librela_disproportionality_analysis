@@ -1,14 +1,16 @@
 {
-  "cleaning_date": ["2025-09-29"],
-  "input_files": [104],
-  "drugs_processed": [7],
-  "initial_records": [69000],
-  "final_records": [314751],
-  "total_reactions": [314751],
-  "mapped_reactions": [311254],
-  "mapping_success_rate": [98.9],
-  "unique_dogs": [68498],
-  "unique_pts": [896],
-  "data_quality_score": ["NA"],
-  "polypharmacy_rate": [56.7]
+  "cleaning_date": ["2025-10-22"],
+  "date_range": ["2004 - 2025"],
+  "total_dogs": [61551],
+  "total_reactions": [272370],
+  "drugs_analyzed": [7],
+  "top_drug": ["bedinvetmab"],
+  "top_drug_n": [30809],
+  "unique_pts_identified": [896],
+  "mapping_rate": [98.9],
+  "death_rate": [18.4],
+  "polypharmacy_rate": [37.7],
+  "multiple_study_drugs_rate": [0],
+  "mean_reactions_per_report": [4.4],
+  "max_reactions_per_report": [124]
 }

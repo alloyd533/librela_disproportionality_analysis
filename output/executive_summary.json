@@ -1,0 +1,13 @@
+{
+  "analysis_date": ["2025-10-22"],
+  "target_drug": ["bedinvetmab"],
+  "total_dogs_analyzed": [60977],
+  "target_drug_dogs": [30345],
+  "comparator_drug_dogs": [30632],
+  "pts_analyzed": [786],
+  "prr_signals": [76],
+  "mgps_signals": [0],
+  "bcpnn_signals": [126],
+  "consensus_signals": [76],
+  "top_consensus_signals": ["Luxation/subluxation", "Inappropriate elimination NOS", "Prescribing error", "Cognitive disorder NOS", "Urinary incontinence"]
+}
