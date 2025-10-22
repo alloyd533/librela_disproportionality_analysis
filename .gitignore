@@ -1,4 +1,27 @@
-.Rproj.user
+# Large data files
+data/processed/matched_data.rds
+data/processed/matched_data.csv
+data/processed/complete_combined_raw.csv
+data/processed/*_combined.csv
+
+# Raw data (optional - uncomment if needed)
+# data/raw/*.csv
+
+# Logs
+logs/*.txt
+
+# R history and session data
 .Rhistory
 .RData
-.Ruserdata
+.Rproj.user
+
+# Output files (optional - uncomment if you don't want to track outputs)
+output/figures/*.png
+output/tables/*.html
+```
+
+# Other ignores
+logs/*.txt
+.Rhistory
+.RData
+.Rproj.user
