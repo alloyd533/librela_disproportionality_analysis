@@ -34,7 +34,7 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 # ==============================================================================
 
 # Sensitivity analysis settings
-N_SIMS <- 1000                   # Number of simulations to run
+N_SIMS <- 5                   # Number of simulations to run
 N_WORKERS <- 8                   # Parallel 
 CUTOFF_DATE <- as_date("2025-06-30")  
 
@@ -203,287 +203,269 @@ dir.create(here("output", "tables"), showWarnings = FALSE, recursive = TRUE)
 # 6. Define Simulation Function ------------------------------------------------
 # ==============================================================================
 
-run_single_simulation <- function(sim_id, ae_df, reporting_rates, 
-                                  eu_countries, life_table_by_size, cutoff_date) {
+run_single_simulation <- function(sim_id, ae_df, reporting_rates, eu_countries, 
+                                  life_table_by_size, cutoff_date) {
   
-  # ============================================================================
-  # Sample hyperparameters from configured ranges
-  # ============================================================================
-  
+  # Sample hyperparameters from configured ranges 
   correlation <- qunif(lhs_matrix[sim_id, 1], CORRELATION_MIN, CORRELATION_MAX)
   dropout_rate <- qunif(lhs_matrix[sim_id, 2], DROPOUT_RATE_MIN, DROPOUT_RATE_MAX)
   dose_buffer_pct <- qunif(lhs_matrix[sim_id, 3], DOSE_BUFFER_MIN, DOSE_BUFFER_MAX)
-  beta_val <- qbeta(lhs_matrix[sim_id, 4], shape1 = 2.5, shape2 = 7)
-  underreporting_mult <- UNDERREPORTING_MIN + beta_val * UNDERREPORTING_MAX 
+  beta_val <- qbeta(lhs_matrix[sim_id, 4], shape1 = 2.5, shape2 = 7) 
+  underreporting_mult <- UNDERREPORTING_MIN + beta_val * UNDERREPORTING_MAX
   known_global_doses_sold <- round(qunif(lhs_matrix[sim_id, 5], TOTAL_DOSES_MIN, TOTAL_DOSES_MAX))
-  
-  target_doses_consumed <- known_global_doses_sold * (1 - dose_buffer_pct)
+  target_doses_consumed <- known_global_doses_sold * (1 - dose_buffer_pct) 
   
   # Country-specific reporting rate adjustments
   reporting_rates_adjusted <- reporting_rates %>%
     mutate(
       reporting_rate_adj = runif(n(), min = REPORTING_ADJ_MIN, max = REPORTING_ADJ_MAX),
       ae_per_10k_doses = ae_per_10k_doses * reporting_rate_adj
-    )
+      ) 
   
-  # ============================================================================
-  # Market share estimation
-  # ============================================================================
-  
+# Market share estimation 
   analysis_data <- ae_df %>%
     group_by(country) %>%
     summarise(n_aes = n(), .groups = "drop") %>%
     mutate(
       country_group = case_when(
         country == "United States" ~ "United States",
-        country == "United Kingdom" ~ "United Kingdom", 
-        country == "Canada" ~ "Canada",
-        country == "France" ~ "France",
-        country == "Germany" ~ "Germany",
-        country == "Italy" ~ "Italy",
-        country == "Spain" ~ "Spain",
-        country == "Australia" ~ "Australia",
-        country %in% eu_countries ~ "EU_combined",
-        TRUE ~ "Rest_of_World"
-      )
-    ) %>%
-    group_by(country_group) %>%
-    summarise(total_aes = sum(n_aes), .groups = "drop") %>%
-    left_join(reporting_rates_adjusted, by = "country_group") %>%
-    mutate(
-      license_date = case_when(
-        country_group == "United States" ~ as_date("2023-05-05"),
-        country_group == "United Kingdom" ~ as_date("2020-11-10"),
-        country_group == "Canada" ~ as_date("2023-03-08"),
-        country_group == "Australia" ~ as_date("2022-09-01"),
-        country_group %in% c("France", "Germany", "Italy", "Spain", "EU_combined") ~ as_date("2020-11-10"),
-        country_group == "Rest_of_World" ~ as_date("2022-01-01")
-      ),
-      estimated_doses = total_aes / (ae_per_10k_doses / 10000),
-      market_share = estimated_doses / sum(estimated_doses)
-    )
-  
-  # ============================================================================
-  # Logistic growth modeling
-  # ============================================================================
-  
-  empirical_uptake <- ae_df %>%
-    mutate(
-      year_month = floor_date(date, "month"),
-      country_group = case_when(
-        country == "United States" ~ "United States",
         country == "United Kingdom" ~ "United Kingdom",
         country == "Canada" ~ "Canada",
         country == "France" ~ "France",
-        country == "Germany" ~ "Germany",
-        country == "Italy" ~ "Italy",
+        country == "Germany" ~ "Germany", 
+        country == "Italy" ~ "Italy", 
         country == "Spain" ~ "Spain",
         country == "Australia" ~ "Australia",
         country %in% eu_countries ~ "EU_combined",
-        TRUE ~ "Rest_of_World"
-      )
-    ) %>%
-    count(country_group, year_month, name = "n_aes") %>%
-    left_join(analysis_data %>% dplyr::select(country_group, license_date), 
-              by = "country_group") %>%
-    filter(year_month >= license_date) %>%
-    left_join(reporting_rates_adjusted %>% dplyr::select(country_group, ae_per_10k_doses), 
-              by = "country_group") %>%
-    mutate(
-      months_since_launch = as.numeric(interval(license_date, year_month) / months(1)),
-      estimated_doses = n_aes / (ae_per_10k_doses / 10000)
-    ) %>%
+        TRUE ~ "Rest_of_World" 
+      ) 
+    ) %>% 
     group_by(country_group) %>%
-    arrange(year_month) %>%
-    mutate(cumulative_doses = cumsum(estimated_doses)) %>%
-    ungroup()
+    summarise(total_aes = sum(n_aes), .groups = "drop") %>%
+    left_join(reporting_rates_adjusted, by = "country_group") %>% 
+    mutate( 
+      license_date = case_when(
+        country_group == "United States" ~ as_date("2023-05-05"), 
+        country_group == "United Kingdom" ~ as_date("2020-11-10"),
+        country_group == "Canada" ~ as_date("2023-03-08"), 
+        country_group == "Australia" ~ as_date("2022-09-01"), 
+        country_group %in% c("France", "Germany", "Italy", "Spain", "EU_combined") ~ as_date("2020-11-10"), 
+        country_group == "Rest_of_World" ~ as_date("2022-01-01") 
+      ), 
+      estimated_doses = total_aes / (ae_per_10k_doses / 10000),
+      market_share = estimated_doses / sum(estimated_doses) ) 
   
-  logistic_params <- empirical_uptake %>%
-    group_by(country_group) %>%
-    summarise(
-      months_available = max(months_since_launch),
-      current = max(cumulative_doses),
-      K = calculate_K(current, months_available),
-      model = list(fit_logistic_fixed_K(pick(everything()), K)),  # ← CHANGE THIS
-      r = ifelse(!is.null(model[[1]]), coef(model[[1]])["r"], 0.1),
-      t0 = ifelse(!is.null(model[[1]]), coef(model[[1]])["t0"], months_available * 0.5),
-      pct_capacity = 100 * current / K,
-      .groups = "drop"
-    )
-  
-  analysis_data <- analysis_data %>%
-    left_join(logistic_params, by = "country_group")
-  
-  # ============================================================================
-  # Define parameterized functions
-  # ============================================================================
-  
-  sample_dog_age_and_weight_param <- function(n, corr, a_sd, w_sd) {
-    
-    mu <- c(0, 0)
-    sigma <- matrix(c(1, corr, corr, 1), nrow = 2)
-    z <- MASS::mvrnorm(n, mu = mu, Sigma = sigma)
-    
-    u1 <- pnorm(z[, 1])
-    u2 <- pnorm(z[, 2])
-    
-    age_at_start <- qbeta(u1, shape1 = 6, shape2 = 3) * 17 + 1
-    weight_kg <- qlnorm(u2, meanlog = log(26.06) - 0.5 * 0.4^2, sdlog = 0.4)
-    weight_kg <- pmin(weight_kg, 100)
-    
-    tibble(age_at_start, weight_kg)
-  }
-  
-  treatment_persistence_param <- function(survival_months, lambda) {
-    n <- length(survival_months)
-    treatment_months <- rexp(n, rate = lambda)
-    pmin(ceiling(treatment_months), ceiling(survival_months))
-  }
-  
-  # ============================================================================
-  # Run simulation
-  # ============================================================================
-  
-  dogs_list <- list()
-  cumulative_doses <- 0
-  batch_num <- 0
-  
-  while (cumulative_doses < target_doses_consumed) {
-    batch_num <- batch_num + 1
-    
-    remaining_pct <- cumulative_doses / target_doses_consumed
-    batch_size <- case_when(
-      remaining_pct < 0.90 ~ 50000,
-      remaining_pct < 0.96 ~ 10000,
-      TRUE ~ 2000
-    )
-    
-    dog_demographics <- sample_dog_age_and_weight_param(
-      batch_size, correlation, age_sd, weight_sd
-    )
-    
-    batch_dogs <- tibble(
-      dog_id = (batch_num - 1) * 50000 + 1:batch_size,
-      country_group = sample(
-        analysis_data$country_group,
-        size = batch_size,
-        replace = TRUE,
-        prob = analysis_data$market_share
-      )
-    ) %>%
-      left_join(logistic_params %>% dplyr::select(country_group, K, r, t0), 
-                by = "country_group") %>%
-      left_join(analysis_data %>% dplyr::select(country_group, license_date), 
-                by = "country_group") %>%
-      bind_cols(dog_demographics) %>%
-      mutate(
-        total_months = as.numeric(interval(license_date, cutoff_date) / months(1)),
-        N_total = K / (1 + exp(-r * (total_months - t0))),
-        u = runif(n()) * N_total,
-        months_to_entry = t0 - (1 / r) * log(pmax(K / u - 1, 0.001)),
-        months_to_entry = pmin(pmax(months_to_entry, 0), total_months),
-        entry_date = license_date + months(round(months_to_entry))
-      )
-    
-    batch_dogs$size_group <- assign_size_group(batch_dogs$weight_kg)
-    
-    batch_dogs$survival_months <- survival_months_from_size_and_age_vectorized(
-      batch_dogs$age_at_start,
-      batch_dogs$size_group
-    )
-    
-    batch_dogs$treatment_months <- treatment_persistence_param(
-      batch_dogs$survival_months,
-      dropout_rate
-    )
-    
-    batch_dogs <- batch_dogs %>%
-      mutate(
-        months_to_cutoff = as.numeric(interval(entry_date, cutoff_date) / months(1)),
-        doses_by_cutoff = pmin(treatment_months, pmax(0, months_to_cutoff)) %>% ceiling()
-      ) %>%
-      filter(entry_date <= cutoff_date, doses_by_cutoff > 0)
-    
-    dogs_list[[batch_num]] <- batch_dogs
-    cumulative_doses <- cumulative_doses + sum(batch_dogs$doses_by_cutoff)
-    
-    if (batch_num > 300) {
-      warning("Exceeded maximum iterations")
-      break
-    }
-  }
-  
-  dogs_all <- bind_rows(dogs_list)
-  
-  # Trim excess doses
-  if (cumulative_doses > target_doses_consumed) {
-    dogs_sorted <- dogs_all %>% arrange(desc(doses_by_cutoff))
-    dogs_to_remove <- 0
-    running_total <- cumulative_doses
-    
-    for (i in 1:nrow(dogs_sorted)) {
-      if (running_total - dogs_sorted$doses_by_cutoff[i] >= target_doses_consumed) {
-        running_total <- running_total - dogs_sorted$doses_by_cutoff[i]
-        dogs_to_remove <- dogs_to_remove + 1
-      } else {
-        break
-      }
-    }
-    
-    dogs_final <- dogs_all %>%
-      arrange(desc(doses_by_cutoff)) %>%
-      slice(-(1:dogs_to_remove))
-  } else {
-    dogs_final <- dogs_all
-  }
-  
-  # ============================================================================
-  # Calculate ADR risks (as percentages)
-  # ============================================================================
-  
-  exposure_summary <- dogs_final %>%
-    count(country_group, name = "n_exposed")
-  
-  adr_summary <- ae_df %>%
-    mutate(country_group = case_when(
-      country == "United States" ~ "United States",
+  # Logistic growth modeling # 
+empirical_uptake <- ae_df %>% 
+  mutate( 
+    year_month = floor_date(date, "month"),
+    country_group = case_when( 
+      country == "United States" ~ "United States", 
       country == "United Kingdom" ~ "United Kingdom",
-      country == "Canada" ~ "Canada",
+      country == "Canada" ~ "Canada", 
       country == "France" ~ "France",
       country == "Germany" ~ "Germany",
       country == "Italy" ~ "Italy",
-      country == "Spain" ~ "Spain",
+      country == "Spain" ~ "Spain", 
       country == "Australia" ~ "Australia",
-      country %in% eu_countries ~ "EU_combined",
-      TRUE ~ "Rest_of_World"
-    )) %>%
-    count(country_group, pt, name = "n_observed") %>%
-    mutate(n_corrected = n_observed * underreporting_mult)
+      country %in% eu_countries ~ "EU_combined", TRUE ~ "Rest_of_World" 
+    ) 
+  ) %>%
+  count(country_group, year_month, name = "n_aes") %>%
+  left_join(analysis_data %>%
+              dplyr::select(country_group, license_date), by = "country_group") %>% 
+  filter(year_month >= license_date) %>%
+  left_join(reporting_rates_adjusted %>% 
+              dplyr::select(country_group, ae_per_10k_doses), by = "country_group") %>% 
+  mutate( 
+    months_since_launch = as.numeric(interval(license_date, year_month) / months(1)),
+    estimated_doses = n_aes / (ae_per_10k_doses / 10000)
+  ) %>% 
+  group_by(country_group) %>%
+  arrange(year_month) %>%
+  mutate(cumulative_doses = cumsum(estimated_doses)) %>% 
+  ungroup() 
+
+logistic_params <- empirical_uptake %>%
+  group_by(country_group) %>%
+  summarise(
+    months_available = max(months_since_launch), 
+    current = max(cumulative_doses), 
+    K = calculate_K(current, months_available),
+    model = list(fit_logistic_fixed_K(pick(everything()), K)),  # ← CHANGE THIS 
+    r = ifelse(!is.null(model[[1]]), coef(model[[1]])["r"], 0.1), 
+    t0 = ifelse(!is.null(model[[1]]), coef(model[[1]])["t0"], months_available * 0.5), 
+    pct_capacity = 100 * current / K, .groups = "drop" ) 
+
+analysis_data <- analysis_data %>% left_join(logistic_params, by = "country_group") 
+
+# Define parameterized functions 
+
+sample_dog_age_and_weight_param <- function(n, corr, a_sd, w_sd) {
   
-  adr_risks <- adr_summary %>%
-    left_join(exposure_summary, by = "country_group") %>%
+  mu <- c(0, 0) 
+  sigma <- matrix(c(1, corr, corr, 1), nrow = 2)
+  z <- MASS::mvrnorm(n, mu = mu, Sigma = sigma)
+  
+  u1 <- pnorm(z[, 1]) 
+  u2 <- pnorm(z[, 2])
+  
+  age_at_start <- qbeta(u1, shape1 = 6, shape2 = 3) * 17 + 1 
+  weight_kg <- qlnorm(u2, meanlog = log(26.06) - 0.5 * 0.4^2, sdlog = 0.4)
+  weight_kg <- pmin(weight_kg, 100) 
+  tibble(age_at_start, weight_kg) 
+} 
+
+treatment_persistence_param <- function(survival_months, lambda) { 
+  
+  n <- length(survival_months)
+  treatment_months <- rexp(n, rate = lambda)
+  pmin(ceiling(treatment_months), ceiling(survival_months))
+} 
+
+# Run simulation 
+
+dogs_list <- list() 
+cumulative_doses <- 0 
+batch_num <- 0 
+
+while (cumulative_doses < target_doses_consumed) { 
+  batch_num <- batch_num + 1
+  
+  remaining_pct <- cumulative_doses / target_doses_consumed 
+  batch_size <- case_when( 
+    remaining_pct < 0.90 ~ 50000,
+    remaining_pct < 0.96 ~ 10000,
+    TRUE ~ 2000 
+  ) 
+  
+  dog_demographics <- sample_dog_age_and_weight_param(
+    batch_size, correlation, age_sd, weight_sd 
+  )
+  
+  batch_dogs <- tibble(
+    dog_id = (batch_num - 1) * 50000 + 1:batch_size,
+    country_group = sample( 
+      analysis_data$country_group,
+      size = batch_size, 
+      replace = TRUE,
+      prob = analysis_data$market_share
+    ) 
+  ) %>% 
+    left_join(logistic_params %>%
+                dplyr::select(country_group, K, r, t0), 
+              by = "country_group") %>% 
+    left_join(analysis_data %>% 
+                dplyr::select(country_group, license_date),
+              by = "country_group") %>%
+    bind_cols(dog_demographics) %>%
     mutate(
-      risk_pct_observed = 100 * n_observed / n_exposed,
-      risk_pct_corrected = 100 * n_corrected / n_exposed
-    )
+      total_months = as.numeric(interval(license_date, cutoff_date) / months(1)),
+      N_total = K / (1 + exp(-r * (total_months - t0))),
+      u = runif(n()) * N_total, 
+      months_to_entry = t0 - (1 / r) * log(pmax(K / u - 1, 0.001)), 
+      months_to_entry = pmin(pmax(months_to_entry, 0), total_months), 
+      entry_date = license_date + months(round(months_to_entry))
+    ) 
   
-  # ============================================================================
-  # Return results
-  # ============================================================================
+  batch_dogs$size_group <- assign_size_group(batch_dogs$weight_kg) 
   
-  result <- adr_risks %>%
-    mutate(
-      sim_id = sim_id,
-      correlation = correlation,
-      dropout_rate = dropout_rate,
-      dose_buffer_pct = dose_buffer_pct,
-      total_doses = known_global_doses_sold,
-      underreporting_mult = underreporting_mult,
-      total_dogs = nrow(dogs_final),
-      total_doses_consumed = sum(dogs_final$doses_by_cutoff)
-    )
+  batch_dogs$survival_months <- survival_months_from_size_and_age_vectorized(
+    batch_dogs$age_at_start, 
+    batch_dogs$size_group
+  ) 
   
-  return(result)
+  batch_dogs$treatment_months <- treatment_persistence_param( 
+    batch_dogs$survival_months,
+    dropout_rate
+  )
+  
+  batch_dogs <- batch_dogs %>%
+    mutate( 
+      months_to_cutoff = as.numeric(interval(entry_date, cutoff_date) / months(1)),
+      doses_by_cutoff = pmin(treatment_months, pmax(0, months_to_cutoff)) %>% ceiling()
+    ) %>% 
+    filter(entry_date <= cutoff_date, doses_by_cutoff > 0)
+  
+  dogs_list[[batch_num]] <- batch_dogs 
+  cumulative_doses <- cumulative_doses + sum(batch_dogs$doses_by_cutoff)
+  
+  if (batch_num > 300) { 
+    warning("Exceeded maximum iterations")
+    break 
+  } 
+}
+
+dogs_all <- bind_rows(dogs_list)
+
+# Trim excess doses 
+
+if (cumulative_doses > target_doses_consumed) {
+  dogs_sorted <- dogs_all %>%
+    arrange(desc(doses_by_cutoff)) 
+  dogs_to_remove <- 0 
+  running_total <- cumulative_doses 
+  
+  for (i in 1:nrow(dogs_sorted)) {
+    if (running_total - dogs_sorted$doses_by_cutoff[i] >= target_doses_consumed) { 
+      running_total <- running_total - dogs_sorted$doses_by_cutoff[i] 
+      dogs_to_remove <- dogs_to_remove + 1
+    
+      } else {
+        
+      break 
+      }
+  }
+  
+  dogs_final <- dogs_all %>%
+    arrange(desc(doses_by_cutoff)) %>%
+    slice(-(1:dogs_to_remove)) 
+} else { 
+    dogs_final <- dogs_all 
+} 
+
+# Calculate ADR risks (as percentages) 
+
+exposure_summary <- dogs_final %>%
+  count(country_group, name = "n_exposed") 
+
+adr_summary <- ae_df %>%
+  mutate(country_group = case_when(
+    country == "United States" ~ "United States", 
+    country == "United Kingdom" ~ "United Kingdom",
+    country == "Canada" ~ "Canada",
+    country == "France" ~ "France",
+    country == "Germany" ~ "Germany", 
+    country == "Italy" ~ "Italy",
+    country == "Spain" ~ "Spain",
+    country == "Australia" ~ "Australia",
+    country %in% eu_countries ~ "EU_combined", TRUE ~ "Rest_of_World"
+  )) %>% 
+  count(country_group, pt, name = "n_observed") %>%
+  mutate(n_corrected = n_observed * underreporting_mult)
+
+adr_risks <- adr_summary %>%
+  left_join(exposure_summary, by = "country_group") %>% 
+  mutate( 
+    risk_pct_observed = 100 * n_observed / n_exposed,
+    risk_pct_corrected = 100 * n_corrected / n_exposed 
+  ) 
+
+# Return results 
+
+result <- adr_risks %>% 
+  mutate(
+    sim_id = sim_id, 
+    correlation = correlation, 
+    dropout_rate = dropout_rate,
+    dose_buffer_pct = dose_buffer_pct,
+    total_doses = known_global_doses_sold,
+    underreporting_mult = underreporting_mult,
+    total_dogs = nrow(dogs_final),
+    total_doses_consumed = sum(dogs_final$doses_by_cutoff) 
+  ) 
+
+return(result) 
 }
 
 # ==============================================================================
@@ -500,25 +482,20 @@ tic()
 results_list <- with_progress({
   p <- progressor(steps = N_SIMS)
   
-  future_map(
-    1:N_SIMS,
-    function(sim_id) {
-      start_time <- Sys.time()
-      result <- run_single_simulation(
-        sim_id = sim_id,
-        ae_df = ae_df,
-        reporting_rates = reporting_rates,
-        eu_countries = eu_countries,
-        life_table_by_size = life_table_by_size,
-        cutoff_date = CUTOFF_DATE
-      )
-      elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-      
-      p(message = sprintf("Sim %d (%.1fs)", sim_id, elapsed))
-      result
-    },
-    .options = furrr_options(seed = TRUE)
-  )
+  future_map(1:N_SIMS, function(sim_id) {
+    start_time <- Sys.time()
+    res <- run_single_simulation(
+      sim_id = sim_id,
+      ae_df = ae_df,
+      reporting_rates = reporting_rates,
+      eu_countries = eu_countries,
+      life_table_by_size = life_table_by_size,
+      cutoff_date = CUTOFF_DATE
+    )
+    elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+    p(message = sprintf("Sim %d (%.1fs)", sim_id, elapsed))
+    res
+  }, .options = furrr_options(seed = TRUE))
 })
 
 total_time <- toc()
@@ -532,26 +509,26 @@ cat(sprintf("Total: %.1f min | Average: %.2f sec per sim\n",
 # 8. Aggregate and Save Results ------------------------------------------------
 # ==============================================================================
 
+
 all_results <- bind_rows(results_list)
 
-saveRDS(all_results, here("output", "sensitivity", "all_sensitivity_results.rds"))
-write_csv(all_results, here("output", "sensitivity", "all_sensitivity_results.csv"))
+saveRDS(all_results, here("output", "simulation", "full_sim_dataset.rds"))
+write_csv(all_results, here("output", "simulation", "full_sim_dataset.csv"))
 
-cat("✓ Full results saved to output/sensitivity/\n")
-
+all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
 # ==============================================================================
 # 9. Calculate Summary Statistics ----------------------------------------------
 # ==============================================================================
 
 # Parameter summary
-param_summary <- all_results %>%
+param_summary <- adr_results %>%
   distinct(sim_id, .keep_all = TRUE) %>%
   select(correlation:total_doses_consumed) %>%
   summarise(across(everything(), list(
     mean = mean, median = median, sd = sd, min = min, max = max
   ), .names = "{.col}_{.fn}"))
 
-write_csv(param_summary, here("output", "sensitivity", "parameter_summary.csv"))
+write_csv(param_summary, here("output", "simulation", "parameter_summary.csv"))
 
 
 cat("PARAMETER DISTRIBUTIONS\n")
@@ -559,18 +536,21 @@ cat("PARAMETER DISTRIBUTIONS\n")
 print(param_summary, n = Inf)
 
 # ADR risk summary with 95% CIs
+
+wq <- function(x, w, p) {
+  Hmisc::wtd.quantile(x, weights = w, probs = p, na.rm = TRUE)
+}
+
 final_summary <- all_results %>%
   group_by(pt, country_group) %>%
   summarise(
     n_sims = n(),
-    # Observed risk
-    median_risk_observed = median(risk_pct_observed),
-    lower_95_observed = quantile(risk_pct_observed, 0.025),
-    upper_95_observed = quantile(risk_pct_observed, 0.975),
-    # Corrected risk (accounting for underreporting)
-    median_risk_corrected = median(risk_pct_corrected),
-    lower_95_corrected = quantile(risk_pct_corrected, 0.025),
-    upper_95_corrected = quantile(risk_pct_corrected, 0.975),
+    median_risk_observed   = median(risk_pct_observed,  na.rm = TRUE),
+    lower_95_observed      = quantile(risk_pct_observed,  0.025, na.rm = TRUE),
+    upper_95_observed      = quantile(risk_pct_observed,  0.975, na.rm = TRUE),
+    median_risk_corrected  = median(risk_pct_corrected, na.rm = TRUE),
+    lower_95_corrected     = quantile(risk_pct_corrected, 0.025, na.rm = TRUE),
+    upper_95_corrected     = quantile(risk_pct_corrected, 0.975, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   arrange(country_group, desc(median_risk_corrected)) %>%
@@ -580,12 +560,12 @@ final_summary <- all_results %>%
       summarise(
         n_sims = n(),
         country_group = "Total",
-        median_risk_corrected = median(risk_pct_corrected),
-        lower_95_corrected = quantile(risk_pct_corrected, 0.025),
-        upper_95_corrected = quantile(risk_pct_corrected, 0.975),
+        median_risk_corrected = wq(risk_pct_corrected, w = n_exposed, p = 0.5),
+        lower_95_corrected    = wq(risk_pct_corrected, w = n_exposed, p = 0.025),
+        upper_95_corrected    = wq(risk_pct_corrected, w = n_exposed, p = 0.975),
         .groups = "drop"
-      ))
-  
+      )
+  )
 
 cat("\n✓ ADR risk summary saved\n")
 
@@ -628,7 +608,7 @@ param_dist_plot <- all_results %>%
                        "total_dogs" = "Total Dogs Simulated")
   ) %>%
   ggplot(aes(x = value)) +
-  geom_histogram(bins = 20, fill = "#9b4b16", alpha = 0.7, color = "#2d2d2d") +
+  geom_histogram(bins = 100, fill = "#9b4b16", alpha = 0.7, color = "#2d2d2d") +
   facet_wrap(~parameter, scales = "free", ncol = 3) +
   labs(
     title = "Distribution of Sampled Parameters Across Simulations",
@@ -659,6 +639,8 @@ top_adrs_plot <- final_summary %>%
   slice_max(median_risk_corrected, n = 15) %>%
   mutate(
     pt = str_to_title(pt) %>% str_replace_all("_", " "),
+    pt = recode(pt,
+                "Increased Blood Urea Nitrogen (Bun) Or Creatinine" = "↑ BUN/Creatinine"),
     pt = fct_reorder(pt, median_risk_corrected)
   ) %>%
   ggplot(aes(y = pt, x = median_risk_corrected)) +
@@ -666,10 +648,10 @@ top_adrs_plot <- final_summary %>%
                  height = 0.3, color = "#555555", linewidth = 0.8) +
   geom_vline(xintercept = c(0.1, 1),
              linetype = "dashed", color = "grey40", linewidth = 0.5) +
-  annotate("text", x = 0.55, y = -1, label = "Uncommon",
-           vjust = -0.5, hjust = 0.5, size = 3.5, fontface = "italic") +
-  annotate("text", x = 1.5, y = -1, label = "Common",
-           vjust = -0.5, hjust = 1, size = 3.5, fontface = "italic") +
+  annotate("text", x = 0.55, y = 15.5, label = "Uncommon",
+           vjust = -0.5, hjust = 0.5, size = 5, fontface = "italic") +
+  annotate("text", x = 2.5, y = 15.5, label = "Common",
+           vjust = -0.5, hjust = 1, size = 5, fontface = "italic") +
   
   scale_x_continuous(
     limits = c(0,6),
@@ -677,27 +659,29 @@ top_adrs_plot <- final_summary %>%
   ) +
   geom_point(size = 3, color = "#9b4b16") +
   labs(
-    title = "Top 20 Adverse Drug Reactions Rates",
-    subtitle = "Risk (%) in exposed dogs | Median with 95% confidence interval | Dotted lines show CIOMS frequency thresholds",
+    title = "Top 10 ADRs Rates",
+    subtitle = "Median with 95% confidence interval | Dotted lines show CIOMS frequency thresholds",
     x = "ADR Risk (%)",
     y = NULL
   ) +
-  theme_minimal(base_size = 12, base_family = "sans") +
+  coord_cartesian(clip = "off") +
+  scale_y_discrete(expand = expansion(mult = c(0.02, 0.12))) +
+  theme_minimal(base_size = 16, base_family = "sans") +
   theme(
     plot.background = element_rect(fill = "#fff1e5", color = NA),
     panel.background = element_rect(fill = "#fff1e5", color = NA),
     panel.grid.minor = element_blank(),
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(size = 10, color = "#555555"),
-    axis.text.y = element_text(size = 10)
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 16, color = "#555555"),
+    axis.text.y = element_text(size = 16)
   )
 
 top_adrs_plot
 
 ggsave(here("output", "figures", "top_adrs_with_uncertainty.png"), 
-       top_adrs_plot, width = 10, height = 8, dpi = 300, bg = "#fff1e5")
+       top_adrs_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
 
-write_csv(final_summary, here("output", "complete_sim_results.csv"))
+write_csv(final_summary, here("output", "simulation", "summary_sim_results.csv"))
 
 cat("✓ Top ADRs plot saved\n")
 
@@ -709,15 +693,18 @@ top_pts <- final_summary %>%
   pull(pt)
 
 adr_top10_clean <- final_summary %>%
-  filter(pt %in% top_pts, country_group != "Total") %>%
+  filter(pt %in% top_pts) %>%
   mutate(
     pt = str_to_title(pt) |> str_replace_all("_", " "),
     country_group = case_match(
       country_group,
       "EU_combined"   ~ "EU (other)",
+      "United Kingdom" ~ "UK",
+      "United States" ~ "US",
       "Rest_of_World" ~ "Rest of World",
       .default = country_group
-    ))
+    ),
+    country_group = fct_reorder(country_group, median_risk_corrected, .desc = TRUE))
 
 # plot (FT aesthetic)
 adr_rate_plot <- adr_top10_clean %>%
@@ -769,23 +756,3 @@ adr_rate_plot
 
 ggsave(here("output", "figures", "adr_country_rate_heatmap.png"), 
        adr_rate_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
-
-# ==============================================================================
-# 12. Final Summary ------------------------------------------------------------
-# ==============================================================================
-
-
-cat("ANALYSIS COMPLETE\n")
-
-cat(sprintf("Total simulations: %d\n", N_SIMS))
-cat(sprintf("Total time: %.1f minutes\n", total_time))
-cat(sprintf("Average time per simulation: %.2f minutes\n", total_time / N_SIMS))
-cat("\nOutput files:\n")
-cat("  - output/sensitivity/all_sensitivity_results.csv\n")
-cat("  - output/sensitivity/adr_risk_summary.csv\n")
-cat("  - output/sensitivity/parameter_summary.csv\n")
-cat("  - output/figures/parameter_distributions.png\n")
-cat("  - output/figures/top_adrs_with_uncertainty.png\n")
-
-
-cat("✓ All analyses complete!\n")
