@@ -8,9 +8,8 @@
 # bedinvetmab to estimate realistic adverse drug event risks for the drug with
 # uncertainty quantification through sensitivity analysis.
 
-# ==============================================================================
 # 1. Setup ---------------------------------------------------------------------
-# ==============================================================================
+
 # Load required packages
 required_packages <- c(
   "tidyverse", "readxl", "here", "survival", "truncnorm", "forcats", "viridis",
@@ -29,15 +28,13 @@ install_if_missing <- function(packages) {
 install_if_missing(required_packages)
 invisible(lapply(required_packages, library, character.only = TRUE))
 
-# ==============================================================================
-# HYPERPARAMETER CONFIGURATION (MODIFY HERE)
-# ==============================================================================
+
+# HYPERPARAMETER CONFIGURATION 
 
 # Sensitivity analysis settings
-N_SIMS <- 5                   # Number of simulations to run
-N_WORKERS <- 8                   # Parallel 
+N_SIMS <- 1000                  
+N_WORKERS <- 8                   
 CUTOFF_DATE <- as_date("2025-06-30")  
-
 
 # Latin Hypercube
 lhs_matrix <- randomLHS(N_SIMS, 5)
@@ -65,13 +62,6 @@ UNDERREPORTING_MAX <- 20         # 95% under-reporting
 REPORTING_ADJ_MIN <- 0.7         
 REPORTING_ADJ_MAX <- 1.3         
 
-# ==============================================================================
-
-cat("✓ Configuration loaded\n")
-cat(sprintf("  - Simulations: %d\n", N_SIMS))
-cat(sprintf("  - Parallel workers: %d\n", N_WORKERS))
-cat(sprintf("  - Cutoff date: %s\n", CUTOFF_DATE))
-
 # Configure parallel processing
 plan(multisession, workers = N_WORKERS)
 cat(sprintf("✓ Parallel processing enabled with %d workers\n", N_WORKERS))
@@ -81,11 +71,8 @@ ae_df <- read_rds(here("data", "processed", "matched_data.rds")) %>%
   filter(drug == "bedinvetmab",
          date <= CUTOFF_DATE)
 
-cat(sprintf("✓ Loaded %s adverse event reports\n", scales::comma(nrow(ae_df))))
 
-# ==============================================================================
 # 2. Country-specific reporting rates ------------------------------------------
-# ==============================================================================
 
 reporting_rates <- tribble(
   ~country_group, ~ae_per_10k_doses,
@@ -109,17 +96,13 @@ eu_countries <- c(
   "Spain", "Sweden", "Switzerland", "Andorra"
 )
 
-# ==============================================================================
 # 3. Life expectancy tables ----------------------------------------------------
-# ==============================================================================
+
+# Load from Montoya Supplementary material Table 8
 
 life_table_by_size <- read_rds(here("data", "life_table_by_size"))
 
-cat("✓ Life tables loaded\n")
-
-# ==============================================================================
 # 4. Helper Functions ----------------------------------------------------------
-# ==============================================================================
 
 assign_size_group <- function(weights) {
   case_when(
@@ -187,21 +170,15 @@ fit_logistic_fixed_K <- function(data, K_fixed) {
   }, error = function(e) NULL)
 }
 
-cat("✓ Helper functions defined\n")
-
-# ==============================================================================
 # 5. Create Output Directories -------------------------------------------------
-# ==============================================================================
 
 dir.create(here("output"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("output", "sensitivity"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("output", "figures"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("output", "tables"), showWarnings = FALSE, recursive = TRUE)
 
-
-# ==============================================================================
 # 6. Define Simulation Function ------------------------------------------------
-# ==============================================================================
+
 
 run_single_simulation <- function(sim_id, ae_df, reporting_rates, eu_countries, 
                                   life_table_by_size, cutoff_date) {
@@ -468,10 +445,8 @@ result <- adr_risks %>%
 return(result) 
 }
 
-# ==============================================================================
-# 7. Run Sensitivity Analysis in Parallel -------------------------------------
-# ==============================================================================
 
+# 7. Run Simulations -----------------------------------------------------------
 
 cat("STARTING PARALLEL SENSITIVITY ANALYSIS\n")
 
@@ -505,38 +480,21 @@ cat("SENSITIVITY ANALYSIS COMPLETE\n")
 cat(sprintf("Total: %.1f min | Average: %.2f sec per sim\n", 
             elapsed_sec / 60, elapsed_sec / N_SIMS))
 
-# ==============================================================================
-# 8. Aggregate and Save Results ------------------------------------------------
-# ==============================================================================
 
+# 8. Aggregate and Save Results ------------------------------------------------
 
 all_results <- bind_rows(results_list)
 
 saveRDS(all_results, here("output", "simulation", "full_sim_dataset.rds"))
 write_csv(all_results, here("output", "simulation", "full_sim_dataset.csv"))
 
-all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
-# ==============================================================================
-# 9. Calculate Summary Statistics ----------------------------------------------
-# ==============================================================================
+# all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
 
-# Parameter summary
-param_summary <- adr_results %>%
-  distinct(sim_id, .keep_all = TRUE) %>%
-  select(correlation:total_doses_consumed) %>%
-  summarise(across(everything(), list(
-    mean = mean, median = median, sd = sd, min = min, max = max
-  ), .names = "{.col}_{.fn}"))
-
-write_csv(param_summary, here("output", "simulation", "parameter_summary.csv"))
-
-
-cat("PARAMETER DISTRIBUTIONS\n")
-
-print(param_summary, n = Inf)
+# 9. Summary Statistics --------------------------------------------------------
 
 # ADR risk summary with 95% CIs
 
+# Weighted quantiles to reflect different market share
 wq <- function(x, w, p) {
   Hmisc::wtd.quantile(x, weights = w, probs = p, na.rm = TRUE)
 }
@@ -567,12 +525,7 @@ final_summary <- all_results %>%
       )
   )
 
-cat("\n✓ ADR risk summary saved\n")
-
-# ==============================================================================
-# 10. Display Top ADRs ---------------------------------------------------------
-# ==============================================================================
-
+# 9. Display Top ADRs ---------------------------------------------------------
 
 cat("TOP 20 ADRs (Global) - CORRECTED FOR UNDERREPORTING\n")
 final_summary %>%
@@ -587,12 +540,19 @@ final_summary %>%
   select(pt, risk_display) %>%
   print(n = 20)
 
-# ==============================================================================
-# 11. Create Summary Visualizations --------------------------------------------
-# ==============================================================================
+# Parameter summary
+param_summary <- adr_results %>%
+  distinct(sim_id, .keep_all = TRUE) %>%
+  select(correlation:total_doses_consumed) %>%
+  summarise(across(everything(), list(
+    mean = mean, median = median, sd = sd, min = min, max = max
+  ), .names = "{.col}_{.fn}"))
 
+print(param_summary, n = Inf)
+write_csv(param_summary, here("output", "simulation", "parameter_summary.csv"))
 
-cat("CREATING SUMMARY VISUALIZATIONS\n")
+# 11. Plots --------------------------------------------------------------------
+
 # Plot 1: Parameter distributions
 param_dist_plot <- all_results %>%
   distinct(sim_id, .keep_all = TRUE) %>%
@@ -631,9 +591,9 @@ param_dist_plot
 ggsave(here("output", "figures", "parameter_distributions.png"), 
        param_dist_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
 
-cat("✓ Parameter distribution plot saved\n")
 
-# Plot 2: Top ADRs with uncertainty
+# Plot 2: Top ADRs Globally
+
 top_adrs_plot <- final_summary %>%
   filter(pt != "Lack of efficacy", country_group == "Total") %>%
   slice_max(median_risk_corrected, n = 15) %>%
@@ -683,9 +643,8 @@ ggsave(here("output", "figures", "top_adrs_with_uncertainty.png"),
 
 write_csv(final_summary, here("output", "simulation", "summary_sim_results.csv"))
 
-cat("✓ Top ADRs plot saved\n")
 
-# Heatmap plot
+# Plot 3. Country-specific Heatmap plot
 
 top_pts <- final_summary %>%
   filter(pt != "Lack of efficacy", country_group == "Total") %>%
@@ -706,7 +665,6 @@ adr_top10_clean <- final_summary %>%
     ),
     country_group = fct_reorder(country_group, median_risk_corrected, .desc = TRUE))
 
-# plot (FT aesthetic)
 adr_rate_plot <- adr_top10_clean %>%
   arrange(desc(median_risk_corrected)) %>%
   mutate(
