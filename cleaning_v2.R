@@ -241,7 +241,6 @@ complete <- complete %>%
     n_study_drugs = map_int(study_drug_list, length),
     multiple_study_drugs = as.integer(n_study_drugs > 1),
     study_drug_combination = map_chr(study_drug_list, ~if(length(.x) > 1) paste(.x, collapse = " + ") else NA_character_),
-    
     all_drug_names = map(drug_hx, ~{
       if (!is.na(.x)) {
         str_trim(str_split(.x, ",")[[1]]) %>% str_extract("^[^\\s]+") %>% unique()
@@ -292,6 +291,81 @@ veddra <- veddra_raw %>%
   distinct()
 
 cat("VEDDRA processed:", n_distinct(veddra$llt), "LLTs,", n_distinct(veddra$pt), "PTs\n")
+
+# VeDDRA hierarchy data
+veddra_plot <- tibble(
+  level = factor(c("Organ System", "High-Level Terms", "Preferred Terms", "Lower-Level Terms"),
+                 levels = c("Organ System", "High-Level Terms", "Preferred Terms", "Lower-Level Terms")),
+  n = c(24, 231, 1090, 2777)
+)
+
+# Calculate proportional widths and CENTER the rectangles
+df <- veddra_plot %>%
+  mutate(
+    width = n / sum(n),
+    y_bot = row_number() - 1,         
+    y_top = row_number(),             
+    # CENTER rectangles around x = 0
+    x_min = -width / 2,               # Left edge
+    x_max = width / 2,                # Right edge
+    x_mid = 0,                        # Center at x = 0
+    y_mid = (y_bot + y_top) / 2,
+    label = paste0(level, "\n", scales::comma(n))  # Add comma formatting
+  )
+
+# Financial Times theme
+ft_bg   <- "#fff1e5"   
+ft_grid <- "#f2e6dd"
+ft_cols <- c("#0f5499", "#2e6ea6", "#5b8fc2", "#93b7d9")  
+
+theme_ft <- function() {
+  theme_minimal(base_size = 13, base_family = "Arial") +
+    theme(
+      plot.background  = element_rect(fill = ft_bg, colour = NA),
+      panel.background = element_rect(fill = ft_bg, colour = NA),
+      panel.grid.major = element_line(colour = ft_grid, linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      axis.title       = element_blank(),
+      axis.text        = element_blank(),
+      axis.ticks       = element_blank(),
+      legend.position  = "none",
+      plot.title       = element_text(face = "bold", colour = "#2d2d2d", hjust = 0, size = 16),
+      plot.subtitle    = element_text(colour = "#555555", hjust = 0, size = 12),
+      plot.caption     = element_text(colour = "#888888", hjust = 0, size = 10),
+      plot.margin      = margin(20, 20, 20, 20)
+    )
+}
+
+# Calculate symmetric limits
+x_lim <- max(df$width) / 2 * 1.1
+
+# Create the pyramid plot
+veddra_pyramid <- ggplot(df) +
+  geom_rect(aes(xmin = x_min, xmax = x_max, ymin = y_bot, ymax = y_top, fill = level),
+            colour = "white", linewidth = 1.2, alpha = 0.9) +
+  
+  geom_text(aes(x = x_mid, y = y_mid, label = label), 
+            lineheight = 0.9, 
+            colour = "black",
+            size = 4) +
+  
+  scale_fill_manual(values = ft_cols) +
+  scale_y_reverse(expand = c(0, 0.1), limits = c(nrow(df) + 0.1, -0.1)) +
+  scale_x_continuous(expand = c(0, 0), limits = c(-x_lim, x_lim)) +
+  
+  labs(
+    title = "VeDDRA Terminology Hierarchy",
+    subtitle = "Distribution of veterinary adverse reaction terms across classification levels",
+    caption = paste0("Total terms: ", scales::comma(sum(veddra_plot$n)), " • Width proportional to term count")
+  ) +
+  
+  coord_cartesian(clip = "off") +
+  theme_ft()
+
+veddra_pyramid
+
+ggsave(here("output", "figures", "veddra_hierarchy_plot.png"),
+       veddra_pyramid)
 
 # 8. Data Expansion and Reaction Mapping -----------------------------------
 
@@ -452,12 +526,12 @@ summary_data <- matched %>%
   )
 
 # Calculate PT statistics from PRE-EXPANSION data
-pt_stats_raw <- complete %>%
+complete %>%
   filter(n_study_drugs == 1) %>%
   mutate(n_reactions = str_count(Reaction, ",") + 1) %>%
-  group_by(drug) %>%
+  # group_by(drug) %>%
   summarise(
-    mean_reactions = mean(n_reactions, na.rm = TRUE),
+    mean_reactions = median(n_reactions, na.rm = TRUE),
     max_reactions = max(n_reactions, na.rm = TRUE),
     .groups = "drop"
   ) %>%
@@ -506,7 +580,7 @@ data_summary_table_data <- summary_data %>%
 
 # Add PT statistics section with proper 3-column format
 pt_header <- tibble(
-  variable = "Mean number of PTs cited Per Report",
+  variable = "Median number of PTs cited Per Report",
   n = NA_real_,
   percentage = NA_real_
 )
@@ -643,6 +717,113 @@ cat("Mean reactions per report:", final_summary$mean_reactions_per_report, "\n")
 cat("Top drug:", final_summary$top_drug, "(", format(final_summary$top_drug_n, big.mark = ","), "dogs )\n")
 
 cat("\nCleaning completed successfully\n")
+
+# Life-tables ------------------------------------------------------------------
+
+# Derived from Montoya et al. Suppl table 8
+
+
+life_table_by_size <- tribble(
+  ~size_group, ~age_lower, ~age_upper, ~e_x_years, ~ci_lower, ~ci_upper,
+  # Toy
+  "Toy", 0, 1, 13.58, 13.52, 13.63,
+  "Toy", 1, 2, 12.97, 12.92, 13.02,
+  "Toy", 2, 3, 12.09, 12.04, 12.14,
+  "Toy", 3, 4, 11.19, 11.14, 11.24,
+  "Toy", 4, 5, 10.28, 10.24, 10.33,
+  "Toy", 5, 6, 9.38, 9.34, 9.43,
+  "Toy", 6, 7, 8.49, 8.45, 8.54,
+  "Toy", 7, 8, 7.62, 7.58, 7.67,
+  "Toy", 8, 9, 6.77, 6.73, 6.81,
+  "Toy", 9, 10, 5.97, 5.92, 6.01,
+  "Toy", 10, 11, 5.22, 5.17, 5.26,
+  "Toy", 11, 12, 4.52, 4.48, 4.57,
+  "Toy", 12, 13, 3.88, 3.84, 3.93,
+  "Toy", 13, 14, 3.32, 3.28, 3.37,
+  "Toy", 14, 15, 2.85, 2.80, 2.91,
+  "Toy", 15, 16, 2.47, 2.41, 2.53,
+  "Toy", 16, 17, 2.23, 2.15, 2.31,
+  "Toy", 17, 99, 2.08, 1.97, 2.18,
+  # Small
+  "Small", 0, 1, 13.79, 13.74, 13.83,
+  "Small", 1, 2, 13.02, 12.98, 13.06,
+  "Small", 2, 3, 12.10, 12.07, 12.14,
+  "Small", 3, 4, 11.18, 11.14, 11.21,
+  "Small", 4, 5, 10.26, 10.22, 10.30,
+  "Small", 5, 6, 9.35, 9.31, 9.39,
+  "Small", 6, 7, 8.44, 8.41, 8.48,
+  "Small", 7, 8, 7.56, 7.52, 7.59,
+  "Small", 8, 9, 6.69, 6.65, 6.72,
+  "Small", 9, 10, 5.88, 5.85, 5.91,
+  "Small", 10, 11, 5.11, 5.08, 5.15,
+  "Small", 11, 12, 4.41, 4.37, 4.44,
+  "Small", 12, 13, 3.76, 3.73, 3.79,
+  "Small", 13, 14, 3.20, 3.16, 3.23,
+  "Small", 14, 15, 2.73, 2.69, 2.77,
+  "Small", 15, 16, 2.36, 2.31, 2.40,
+  "Small", 16, 17, 2.10, 2.05, 2.16,
+  "Small", 17, 99, 1.97, 1.89, 2.04,
+  # Medium
+  "Medium", 0, 1, 12.94, 12.88, 12.99,
+  "Medium", 1, 2, 12.14, 12.09, 12.20,
+  "Medium", 2, 3, 11.23, 11.18, 11.28,
+  "Medium", 3, 4, 10.31, 10.26, 10.36,
+  "Medium", 4, 5, 9.38, 9.33, 9.44,
+  "Medium", 5, 6, 8.49, 8.44, 8.54,
+  "Medium", 6, 7, 7.58, 7.53, 7.63,
+  "Medium", 7, 8, 6.71, 6.66, 6.76,
+  "Medium", 8, 9, 5.87, 5.82, 5.91,
+  "Medium", 9, 10, 5.09, 5.05, 5.14,
+  "Medium", 10, 11, 4.36, 4.32, 4.41,
+  "Medium", 11, 12, 3.73, 3.69, 3.77,
+  "Medium", 12, 13, 3.16, 3.11, 3.20,
+  "Medium", 13, 14, 2.69, 2.64, 2.73,
+  "Medium", 14, 15, 2.32, 2.26, 2.38,
+  "Medium", 15, 16, 2.06, 1.99, 2.13,
+  "Medium", 16, 17, 1.90, 1.80, 1.99,
+  "Medium", 17, 99, 1.90, 1.75, 2.05,
+  # Large
+  "Large", 0, 1, 11.70, 11.66, 11.73,
+  "Large", 1, 2, 10.97, 10.93, 11.00,
+  "Large", 2, 3, 10.08, 10.05, 10.12,
+  "Large", 3, 4, 9.19, 9.15, 9.22,
+  "Large", 4, 5, 8.28, 8.25, 8.31,
+  "Large", 5, 6, 7.40, 7.37, 7.43,
+  "Large", 6, 7, 6.54, 6.51, 6.57,
+  "Large", 7, 8, 5.71, 5.68, 5.74,
+  "Large", 8, 9, 4.93, 4.90, 4.96,
+  "Large", 9, 10, 4.22, 4.19, 4.25,
+  "Large", 10, 11, 3.62, 3.59, 3.65,
+  "Large", 11, 12, 3.08, 3.05, 3.11,
+  "Large", 12, 13, 2.62, 2.58, 2.65,
+  "Large", 13, 14, 2.25, 2.21, 2.28,
+  "Large", 14, 15, 1.98, 1.94, 2.02,
+  "Large", 15, 16, 1.79, 1.73, 1.85,
+  "Large", 16, 17, 1.66, 1.58, 1.75,
+  "Large", 17, 99, 1.57, 1.44, 1.69,
+  # Giant
+  "Giant", 0, 1, 9.70, 9.54, 9.85,
+  "Giant", 1, 2, 8.93, 8.78, 9.08,
+  "Giant", 2, 3, 8.08, 7.93, 8.23,
+  "Giant", 3, 4, 7.21, 7.06, 7.36,
+  "Giant", 4, 5, 6.37, 6.22, 6.51,
+  "Giant", 5, 6, 5.59, 5.44, 5.73,
+  "Giant", 6, 7, 4.87, 4.72, 5.01,
+  "Giant", 7, 8, 4.21, 4.07, 4.36,
+  "Giant", 8, 9, 3.64, 3.50, 3.79,
+  "Giant", 9, 10, 3.18, 3.02, 3.34,
+  "Giant", 10, 11, 2.82, 2.64, 2.99,
+  "Giant", 11, 12, 2.52, 2.31, 2.72,
+  "Giant", 12, 13, 2.32, 2.06, 2.57,
+  "Giant", 13, 99, 2.08, 1.75, 2.41
+) %>%
+  mutate(
+    sd_years = (ci_upper - ci_lower) / (2 * 1.96),
+    e_x_months = e_x_years * 12,
+    sd_months = sd_years * 12
+  )
+
+write_rds(life_table_by_size, here("data", "life_table_by_size"))
 # ============================================================================
 # End of Script
 # ============================================================================

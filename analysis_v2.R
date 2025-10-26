@@ -726,6 +726,122 @@ mono_comparison_table
 
 gtsave(mono_comparison_table, here("output", "tables", "monotherapy_comparison.html"))
 
+# 3. NSAID subgroup analysis
+
+dog_pt_nsaid <- dog_pt %>% filter(drug != c("grapiprant"))
+
+nsaid_denominators <- dog_pt_nsaid %>%
+  mutate(is_target = drug == target_drug) %>%
+  distinct(dog_id, is_target) %>%
+  summarise(
+    n_target = sum(is_target),
+    n_comparator = sum(!is_target),
+    .groups = "drop"
+  )
+
+prr_nsaid_results <- dog_pt_nsaid %>%
+  mutate(is_target = drug == target_drug) %>%
+  distinct(dog_id, is_target, pt) %>%
+  group_by(pt) %>%
+  summarise(
+    reports_target = sum(is_target),
+    reports_comparator = sum(!is_target),
+    .groups = "drop"
+  ) %>%
+  filter(reports_target >= min_reports, reports_comparator >= min_reports) %>%
+  rowwise() %>%
+  mutate(
+    stats = list(calculate_prr_comprehensive(reports_target, nsaid_denominators$n_target, 
+                                             reports_comparator, nsaid_denominators$n_comparator))
+  ) %>%
+  unnest_wider(stats) %>%
+  ungroup() %>%
+  mutate(disproportionality_signal = !is.na(prr) & !is.na(chi_square) & prr >= 2 & chi_square >= 4) %>%
+  arrange(desc(prr))
+
+cat("\n=== NSAID Subgroup Analysis ===\n")
+cat("Target drug:", format(nsaid_denominators$n_target, big.mark = ","), "dogs\n")
+cat("Signals detected:", sum(prr_nsaid_results$disproportionality_signal), "\n")
+
+# Top 10 most prevalent
+top_prevalent <- prr_results %>%
+  arrange(desc(reports_target)) %>%
+  slice_head(n = 10) %>%
+  select(pt, reports_main = reports_target, prr_main = prr, chi_main = chi_square) %>%
+  left_join(
+    prr_nsaid_results %>% select(pt, reports_nsaid = reports_target, prr_nsaid = prr, chi_nsaid = chi_square),
+    by = "pt"
+  ) %>%
+  filter(!is.na(prr_nsaid)) %>%
+  mutate(section = "Most Commonly Reported PTs")
+
+# Top 10 most disproportionate
+top_disproportionate <- prr_results %>%
+  filter(disproportionality_signal) %>%
+  arrange(desc(prr)) %>%
+  slice_head(n = 10) %>%
+  select(pt, reports_main = reports_target, prr_main = prr, chi_main = chi_square) %>%
+  left_join(
+    prr_nsaid_results %>% select(pt, reports_nsaid = reports_target, prr_nsaid = prr, chi_nsaid = chi_square),
+    by = "pt"
+  ) %>%
+  filter(!is.na(prr_nsaid)) %>%
+  mutate(section = "Most Disproportionate PT")
+
+nsaid_comparison <- bind_rows(top_prevalent, top_disproportionate)
+
+nsaid_comparison_table <- monotherapy_comparison %>%
+  gt(groupname_col = "section") %>%
+  tab_header(
+    title = md(paste0("**Sensitivity Analysis Of Dogs Only On Bedinvetmab**")),
+    subtitle = md("Main Analysis vs NSAID-only")
+  ) %>%
+  cols_label(
+    pt = "Preferred Term",
+    reports_main = "Reports",
+    prr_main = "PRR",
+    chi_main = md("χ²"),
+    reports_nsaid = "Reports",
+    prr_nsaid = "PRR",
+    chi_nsaid = md("χ²")
+  ) %>%
+  tab_spanner(
+    label = "Main Analysis",
+    columns = c(reports_main, prr_main, chi_main)
+  ) %>%
+  tab_spanner(
+    label = "NSAID (n = 25,186)",
+    columns = c(reports_nsaid, prr_nsaid, chi_nsaid)
+  ) %>%
+  fmt_number(columns = c(prr_main, prr_nsaid, chi_main, chi_nsaid), decimals = 2) %>%
+  fmt_integer(columns = c(reports_main, reports_nsaid)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold", align = "center")),
+    locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")),
+    locations = cells_body(columns = prr_main, rows = !is.na(prr_main) & prr_main >= 2)
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")),
+    locations = cells_body(columns = prr_nsaid, rows = !is.na(prr_nsaid) & prr_nsaid >= 2)
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")),
+    locations = cells_body(columns = chi_main, rows = !is.na(chi_main) & chi_main >= 4)
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")),
+    locations = cells_body(columns = chi_nsaid, rows = !is.na(chi_nsaid) & chi_nsaid >= 4)
+  ) %>%
+  cols_align(align = "center", columns = c(reports_main, prr_main, chi_main, reports_nsaid, prr_nsaid, chi_nsaid)) %>%
+  cols_align(align = "left", columns = pt) %>%
+  tab_options(table.font.names = "Arial", table.font.size = 12)
+
+nsaid_comparison_table
+
+gtsave(nsaid_comparison_table, here("output", "tables", "nsaid_comparison.html"))
 # 13. Executive Summary
 
 executive_summary <- list(
