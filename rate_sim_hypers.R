@@ -34,7 +34,7 @@ invisible(lapply(required_packages, library, character.only = TRUE))
 # Sensitivity analysis settings
 N_SIMS <- 1000                  
 N_WORKERS <- 8                   
-CUTOFF_DATE <- as_date("2025-06-30")  
+CUTOFF_DATE <- ymd("2025-06-30")  
 
 # Latin Hypercube
 lhs_matrix <- randomLHS(N_SIMS, 5)
@@ -71,6 +71,13 @@ ae_df <- read_rds(here("data", "processed", "matched_data.rds")) %>%
   filter(drug == "bedinvetmab",
          date <= CUTOFF_DATE)
 
+# Comparison to Monteiro
+monteiro <- ae_df %>%
+  filter(between(date, ymd("2021-02-01"),ymd("2024-06-30")))
+
+n_distinct(monteiro$dog_id)
+
+# 55966 individual PTs in 16,175 ADR reports compared to   17,162
 
 # 2. Country-specific reporting rates ------------------------------------------
 
@@ -84,8 +91,8 @@ reporting_rates <- tribble(
   "Italy", 3.22,
   "Canada", 18.72,
   "Australia", 13.86,
-  "EU_combined", mean(c(3.22, 6.06, 5.41, 3.22)),
-  "Rest_of_World", 9.48
+  "EU_combined", mean(c(3.22, 5.41, 3.22)),
+  "Rest_of_World", mean(c(3.22, 5.41, 3.22))
 )
 
 eu_countries <- c(
@@ -245,7 +252,8 @@ empirical_uptake <- ae_df %>%
       country == "Italy" ~ "Italy",
       country == "Spain" ~ "Spain", 
       country == "Australia" ~ "Australia",
-      country %in% eu_countries ~ "EU_combined", TRUE ~ "Rest_of_World" 
+      country %in% eu_countries ~ "EU_combined", 
+      TRUE ~ "Rest_of_World" 
     ) 
   ) %>%
   count(country_group, year_month, name = "n_aes") %>%
@@ -287,9 +295,9 @@ sample_dog_age_and_weight_param <- function(n, corr, a_sd, w_sd) {
   u1 <- pnorm(z[, 1]) 
   u2 <- pnorm(z[, 2])
   
-  age_at_start <- qbeta(u1, shape1 = 6, shape2 = 3) * 17 + 1 
-  weight_kg <- qlnorm(u2, meanlog = log(26.06) - 0.5 * 0.4^2, sdlog = 0.4)
-  weight_kg <- pmin(weight_kg, 100) 
+  age_at_start <- qbeta(u1, shape1 = 4.5, shape2 = 2.7) * 17 + 1 
+  weight_kg <- pmin(qlnorm(u2, meanlog = log(26.06), sdlog = 0.57), 100)
+
   tibble(age_at_start, weight_kg) 
 } 
 
@@ -451,8 +459,8 @@ return(result)
 cat("STARTING PARALLEL SENSITIVITY ANALYSIS\n")
 
 
+start_time <- Sys.time()
 tic()
-
 # Run simulations in parallel
 results_list <- with_progress({
   p <- progressor(steps = N_SIMS)
@@ -472,21 +480,21 @@ results_list <- with_progress({
     res
   }, .options = furrr_options(seed = TRUE))
 })
+toc()
+elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
 
-total_time <- toc()
-elapsed_sec <- total_time$toc - total_time$tic
-
+print(elapsed)
 cat("SENSITIVITY ANALYSIS COMPLETE\n")
 cat(sprintf("Total: %.1f min | Average: %.2f sec per sim\n", 
-            elapsed_sec / 60, elapsed_sec / N_SIMS))
-
+            elapsed, elapsed*60 / N_SIMS))
+# 150 mins, average 9s per simulation
 
 # 8. Aggregate and Save Results ------------------------------------------------
 
 all_results <- bind_rows(results_list)
 
 saveRDS(all_results, here("output", "simulation", "full_sim_dataset.rds"))
-write_csv(all_results, here("output", "simulation", "full_sim_dataset.csv"))
+# write_csv(all_results, here("output", "simulation", "full_sim_dataset.csv"))
 
 # all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
 
@@ -523,7 +531,7 @@ final_summary <- all_results %>%
         upper_95_corrected    = wq(risk_pct_corrected, w = n_exposed, p = 0.975),
         .groups = "drop"
       )
-  )
+  ) 
 
 # 9. Display Top ADRs ---------------------------------------------------------
 
@@ -541,7 +549,7 @@ final_summary %>%
   print(n = 20)
 
 # Parameter summary
-param_summary <- adr_results %>%
+param_summary <- all_results %>%
   distinct(sim_id, .keep_all = TRUE) %>%
   select(correlation:total_doses_consumed) %>%
   summarise(across(everything(), list(
@@ -625,7 +633,7 @@ top_adrs_plot <- final_summary %>%
     y = NULL
   ) +
   coord_cartesian(clip = "off") +
-  scale_y_discrete(expand = expansion(mult = c(0.02, 0.12))) +
+  scale_y_discrete(expand = expansion(mult = c(0.02, 0.15))) +
   theme_minimal(base_size = 16, base_family = "sans") +
   theme(
     plot.background = element_rect(fill = "#fff1e5", color = NA),
@@ -714,3 +722,72 @@ adr_rate_plot
 
 ggsave(here("output", "figures", "adr_country_rate_heatmap.png"), 
        adr_rate_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
+
+# Plot 4. Country contribution boxplot 
+country_contrib <- all_results %>%
+  group_by(sim_id, country_group) %>%
+  slice(1) %>%
+  summarise(country_n = sum(n_exposed),
+            sim_doses = total_doses,
+            .groups = "drop_last") %>%
+  mutate(proportion = country_n / sum(country_n)) %>%
+  ungroup() %>%
+  mutate(
+    country_group = case_match(
+      country_group,
+      "EU_combined"   ~ "EU (other)",
+      "United Kingdom" ~ "UK",
+      "United States" ~ "US",
+      "Rest_of_World" ~ "Rest of World",
+      .default = country_group
+    )
+  )
+
+total_doses <- country_contrib %>%
+  group_by(sim_id) %>%
+  summarise(total_n = sum(as.numeric(country_n)), 
+            total_dose = first(sim_doses),
+            doses_per_dog = total_dose/total_n,
+            .groups = "drop_last") %>%
+  mutate(median_n = median(total_n),
+         lower_n = quantile(total_n, 0.025),
+         upper_n = quantile(total_n, 0.975),
+         median_doses = median(doses_per_dog),
+         lower_doses = quantile(doses_per_dog, 0.025),
+         upper_doses = quantile(doses_per_dog, 0.975))
+
+country_contrib_plot <- ggplot(country_contrib, 
+                               aes(x = fct_reorder(country_group, proportion, median), 
+                                   y = proportion)) +
+  geom_boxplot(fill = "#c04a0b", alpha = 0.7, color = "#2d2d2d") +
+  scale_y_continuous(labels = scales::percent, name = "Contribution to Total") +
+  scale_x_discrete(name = "Country or Region") +
+  coord_flip() +
+  labs(
+    title = "Country/Region Contributions to Total Number of Dogs Exposed"
+  ) +
+  theme_minimal(base_size = 13, base_family = "Merriweather") +
+  theme(
+    plot.background  = element_rect(fill = "#fff1e5", color = NA),
+    panel.background = element_rect(fill = "#fff1e5", color = NA),
+    panel.grid.major.x = element_line(color = "#d1bfa7", linewidth = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.text.x      = element_text(face = "bold", size = 11, color = "#2d2d2d"),
+    axis.text.y      = element_text(face = "bold", size = 11, color = "#2d2d2d"),
+    axis.title.x     = element_text(face = "bold", size = 12, color = "#333333", margin = margin(t = 10)),
+    axis.title.y     = element_text(face = "bold", size = 12, color = "#333333", margin = margin(r = 10)),
+    plot.title       = element_text(face = "bold", size = 15, hjust = 0.5, color = "#2d2d2d"),
+    plot.subtitle    = element_text(size = 11, hjust = 0.5, color = "#555555"),
+    plot.margin      = margin(15, 15, 15, 15)
+  )
+
+country_contrib_plot
+
+ggsave(here("output", "figures", "country_contribution_boxplot.png"), 
+       country_contrib_plot, width = 10, height = 6, dpi = 300, bg = "#fff1e5")
+
+sum <- final_summary %>%
+  filter(country_group == "Total") %>%
+  arrange(desc(median_risk_corrected))
+          
