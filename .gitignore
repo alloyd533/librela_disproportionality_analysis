@@ -17,8 +17,6 @@ logs/*.txt
 .Rproj.user
 
 # Output files (optional - uncomment if you don't want to track outputs)
-output/figures/*.png
-output/tables/*.html
 ```
 
 # Other ignores
