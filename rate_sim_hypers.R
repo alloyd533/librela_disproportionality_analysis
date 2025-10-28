@@ -496,7 +496,7 @@ all_results <- bind_rows(results_list)
 saveRDS(all_results, here("output", "simulation", "full_sim_dataset.rds"))
 # write_csv(all_results, here("output", "simulation", "full_sim_dataset.csv"))
 
-# all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
+all_results <- readRDS(here("output","simulation","full_sim_dataset.rds"))
 
 # 9. Summary Statistics --------------------------------------------------------
 
@@ -604,7 +604,7 @@ ggsave(here("output", "figures", "parameter_distributions.png"),
 
 top_adrs_plot <- final_summary %>%
   filter(pt != "Lack of efficacy", country_group == "Total") %>%
-  slice_max(median_risk_corrected, n = 15) %>%
+  slice_max(median_risk_corrected, n = 20) %>%
   mutate(
     pt = str_to_title(pt) %>% str_replace_all("_", " "),
     pt = recode(pt,
@@ -616,18 +616,18 @@ top_adrs_plot <- final_summary %>%
                  height = 0.3, color = "#555555", linewidth = 0.8) +
   geom_vline(xintercept = c(0.1, 1),
              linetype = "dashed", color = "grey40", linewidth = 0.5) +
-  annotate("text", x = 0.55, y = 15.5, label = "Uncommon",
+  annotate("text", x = 0.55, y = 20.5, label = "Uncommon",
            vjust = -0.5, hjust = 0.5, size = 5, fontface = "italic") +
-  annotate("text", x = 2.5, y = 15.5, label = "Common",
+  annotate("text", x = 2.5, y = 20.5, label = "Common",
            vjust = -0.5, hjust = 1, size = 5, fontface = "italic") +
   
   scale_x_continuous(
-    limits = c(0,6),
+    limits = c(0,6.5),
     breaks = c(0, 1, 2, 3, 4, 5, 6)
   ) +
   geom_point(size = 3, color = "#9b4b16") +
   labs(
-    title = "Top 10 ADRs Rates",
+    title = "Top 20 ADRs Rates",
     subtitle = "Median with 95% confidence interval | Dotted lines show CIOMS frequency thresholds",
     x = "ADR Risk (%)",
     y = NULL
@@ -647,7 +647,7 @@ top_adrs_plot <- final_summary %>%
 top_adrs_plot
 
 ggsave(here("output", "figures", "top_adrs_with_uncertainty.png"), 
-       top_adrs_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
+       top_adrs_plot, width = 12, height = 8, dpi = 600, bg = "#fff1e5")
 
 write_csv(final_summary, here("output", "simulation", "summary_sim_results.csv"))
 
@@ -656,10 +656,10 @@ write_csv(final_summary, here("output", "simulation", "summary_sim_results.csv")
 
 top_pts <- final_summary %>%
   filter(pt != "Lack of efficacy", country_group == "Total") %>%
-  slice_max(median_risk_corrected, n = 10) %>%
+  slice_max(median_risk_corrected, n = 20) %>%
   pull(pt)
 
-adr_top10_clean <- final_summary %>%
+adr_top20_clean <- final_summary %>%
   filter(pt %in% top_pts) %>%
   mutate(
     pt = str_to_title(pt) |> str_replace_all("_", " "),
@@ -673,7 +673,7 @@ adr_top10_clean <- final_summary %>%
     ),
     country_group = fct_reorder(country_group, median_risk_corrected, .desc = TRUE))
 
-adr_rate_plot <- adr_top10_clean %>%
+adr_rate_plot <- adr_top20_clean %>%
   arrange(desc(median_risk_corrected)) %>%
   mutate(
     pt = recode(pt,
@@ -699,7 +699,7 @@ adr_rate_plot <- adr_top10_clean %>%
     labels = \(x) str_wrap(x, width = 25)
   ) +
   labs(
-    title = "Top 10 ADR Rates by Country or Region",
+    title = "Top 20 ADR Rates by Country or Region",
     subtitle = "Median Rates calculated using simulated exposure denominators (%)"
   ) +
   theme_minimal(base_size = 13, base_family = "Merriweather") +
@@ -708,7 +708,7 @@ adr_rate_plot <- adr_top10_clean %>%
     panel.background = element_rect(fill = "#fff1e5", color = NA),
     panel.grid       = element_blank(),
     axis.text.x      = element_text(face = "bold", size = 11, vjust = 0.5, color = "#2d2d2d"),
-    axis.text.y      = element_text(face = "bold", size = 11, color = "#2d2d2d"),
+    axis.text.y      = element_text(face = "bold", size = 10, color = "#2d2d2d"),
     axis.title.x     = element_text(face = "bold", size = 12, color = "#333333", margin = margin(b = 10)),
     axis.title.y     = element_text(face = "bold", size = 12, color = "#333333", margin = margin(r = 10)),
     legend.position  = "none",
@@ -721,7 +721,7 @@ adr_rate_plot <- adr_top10_clean %>%
 adr_rate_plot
 
 ggsave(here("output", "figures", "adr_country_rate_heatmap.png"), 
-       adr_rate_plot, width = 12, height = 8, dpi = 300, bg = "#fff1e5")
+       adr_rate_plot, width = 14, height = 8, dpi = 600, bg = "#fff1e5")
 
 # Plot 4. Country contribution boxplot 
 country_contrib <- all_results %>%
@@ -785,9 +785,62 @@ country_contrib_plot <- ggplot(country_contrib,
 country_contrib_plot
 
 ggsave(here("output", "figures", "country_contribution_boxplot.png"), 
-       country_contrib_plot, width = 10, height = 6, dpi = 300, bg = "#fff1e5")
+       country_contrib_plot, width = 10, height = 6, dpi = 600, bg = "#fff1e5")
 
 sum <- final_summary %>%
   filter(country_group == "Total") %>%
   arrange(desc(median_risk_corrected))
-          
+
+dose_summary <- all_results %>%
+  group_by(sim_id) %>%
+  summarise(
+    doses_per_dog = first(total_doses) / first(total_dogs),
+    .groups = "drop"
+  )
+
+# Core statistics
+med <- median(dose_summary$doses_per_dog)
+ci <- quantile(dose_summary$doses_per_dog, c(0.025, 0.975))
+
+library(ggtext)
+
+plot_dose_summary <- dose_summary %>%
+  ggplot(aes(x = doses_per_dog)) +
+  geom_area(
+    stat = "density",
+    fill = "#9b4b16",
+    alpha = 0.8,
+    colour = NA
+  ) +
+  scale_x_continuous(limits = c(10,25)) +
+  geom_vline(xintercept = med, colour = "#222", linewidth = 0.8) +
+  geom_vline(xintercept = ci, colour = "#222", linetype = "dashed", linewidth = 0.6) +
+  annotate(
+    "richtext",
+    x = med, y = 0.9 * ggplot_build(ggplot(dose_summary, aes(x = doses_per_dog)) +
+                                      geom_density())$data[[1]]$y %>% max(),
+    label = glue::glue("<b>Median:</b> {round(med, 2)}<br><span style='font-size:10pt'>95% CI: {round(ci[1], 2)} – {round(ci[2], 2)}</span>"),
+    hjust = -0.05, vjust = 1, fill = NA, label.color = NA, family = "Merriweather"
+  ) +
+  labs(
+    title = "Estimated Doses per Dog",
+    subtitle = "Distribution across all simulations (median and 95% credible interval)",
+    x = "Doses per dog",
+    y = NULL
+  ) +
+  theme_minimal(base_family = "Merriweather") +
+  theme(
+    text = element_text(colour = "#222"),
+    plot.title = element_text(size = 15, face = "bold", colour = "#4d3319"),
+    plot.subtitle = element_text(size = 11, colour = "#4d3319"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_line(colour = "#d9c7b8", linewidth = 0.3),
+    plot.background = element_rect(fill = "#fff1e5", colour = NA),
+    panel.background = element_rect(fill = "#fff1e5", colour = NA),
+    axis.text = element_text(colour = "#4d3319"),
+    axis.title.x = element_text(margin = margin(t = 8))
+  )
+
+ggsave(here("output", "figures", "simulation_dose_distribution.png"), 
+       plot_dose_summary, width = 10, height = 6, dpi = 600, bg = "#fff1e5")
