@@ -627,8 +627,8 @@ top_adrs_plot <- final_summary %>%
   ) +
   geom_point(size = 3, color = "#9b4b16") +
   labs(
-    title = "Top 20 ADRs Rates",
-    subtitle = "Median with 95% confidence interval | Dotted lines show CIOMS frequency thresholds",
+    # title = "Top 20 ADRs Rates",
+    # subtitle = "Median with 95% confidence interval | Dotted lines show CIOMS frequency thresholds",
     x = "ADR Risk (%)",
     y = NULL
   ) +
@@ -698,10 +698,10 @@ adr_rate_plot <- adr_top20_clean %>%
     name = "Preferred Term",
     labels = \(x) str_wrap(x, width = 25)
   ) +
-  labs(
-    title = "Top 20 ADR Rates by Country or Region",
-    subtitle = "Median Rates calculated using simulated exposure denominators (%)"
-  ) +
+  # labs(
+  #   title = "Top 20 ADR Rates by Country or Region",
+  #   subtitle = "Median Rates calculated using simulated exposure denominators (%)"
+  # ) +
   theme_minimal(base_size = 13, base_family = "Merriweather") +
   theme(
     plot.background  = element_rect(fill = "#fff1e5", color = NA),
@@ -763,9 +763,9 @@ country_contrib_plot <- ggplot(country_contrib,
   scale_y_continuous(labels = scales::percent, name = "Contribution to Total") +
   scale_x_discrete(name = "Country or Region") +
   coord_flip() +
-  labs(
-    title = "Country/Region Contributions to Total Number of Dogs Exposed"
-  ) +
+  # labs(
+  #   title = "Country/Region Contributions to Total Number of Dogs Exposed"
+  # ) +
   theme_minimal(base_size = 13, base_family = "Merriweather") +
   theme(
     plot.background  = element_rect(fill = "#fff1e5", color = NA),

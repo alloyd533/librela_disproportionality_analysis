@@ -6,8 +6,6 @@
 # ============================================================================
 
 # 1. Setup -------------------------------------------------------------------
-
-rm(list = ls())
 set.seed(2612)
 
 required_packages <- c("tidyverse", "readxl", "here", "janitor", "scales", "gt", "jsonlite")
@@ -259,9 +257,10 @@ complete <- complete %>%
   select(-study_drug_list, -all_drug_names, -polypharmacy_binary)
 tictoc::toc()
 
+complete %>% count(n_study_drugs)
 cat("\nPolypharmacy rates:\n")
 print(complete %>%
-        filter(n_study_drugs == 1) %>%
+        filter(n_study_drugs == 1) %>%61056
         count(polypharmacy) %>%
         mutate(percentage = round(n / sum(n) * 100, 1)))
 
@@ -344,7 +343,7 @@ veddra_pyramid <- ggplot(df) +
   geom_rect(aes(xmin = x_min, xmax = x_max, ymin = y_bot, ymax = y_top, fill = level),
             colour = "white", linewidth = 1.2, alpha = 0.9) +
   
-  geom_text(aes(x = x_mid, y = y_mid, label = label), 
+  geom_text(aes(x = x_mid, y = y_mid, label = label),
             lineheight = 0.9, 
             colour = "black",
             size = 4) +
@@ -352,13 +351,6 @@ veddra_pyramid <- ggplot(df) +
   scale_fill_manual(values = ft_cols) +
   scale_y_reverse(expand = c(0, 0.1), limits = c(nrow(df) + 0.1, -0.1)) +
   scale_x_continuous(expand = c(0, 0), limits = c(-x_lim, x_lim)) +
-  
-  labs(
-    title = "VeDDRA Terminology Hierarchy",
-    subtitle = "Distribution of veterinary adverse reaction terms across classification levels",
-    caption = paste0("Total terms: ", scales::comma(sum(veddra_plot$n)), " • Width proportional to term count")
-  ) +
-  
   coord_cartesian(clip = "off") +
   theme_ft()
 
@@ -413,6 +405,7 @@ if (nrow(unmapped_terms) > 0) {
 
 write_rds(matched, here("data", "processed", "matched_data.rds"))
 write_csv(matched, here("data", "processed", "matched_data.csv"))
+
 
 cat("Cleaned data saved\n")
 
@@ -492,8 +485,8 @@ temporal_plot <- temporal_data %>%
   ) +
   
   labs(
-    title = "Temporal Trends in the EudraVigilance database",
-    subtitle = "Solid lines: ADR reports | Dashed lines: Preferred Terms (PTs) reported",
+    # title = "Temporal Trends in the EudraVigilance database",
+    # subtitle = "Solid lines: ADR reports | Dashed lines: Preferred Terms (PTs) reported",
     x = "Year"
   ) +
   
@@ -503,7 +496,7 @@ temporal_plot <- temporal_data %>%
 temporal_plot
 
 ggsave(here("output", "figures", "temporal_trends.png"), temporal_plot, 
-       width = 12, height = 7, dpi = 300, bg = "#fff1e5")
+       width = 12, height = 7, dpi = 600, bg = "#fff1e5")
 # 11. Data Summary Table ----------------------------------------------------
 
 summary_data <- matched %>%
@@ -601,10 +594,10 @@ data_summary_table_data <- bind_rows(
 
 data_summary_table <- data_summary_table_data %>%
   gt() %>%
-  tab_header(
-    title = "EudraVigilance Database Summary",
-    subtitle = paste("Total records:", format(nrow(summary_data), big.mark = ","))
-  ) %>%
+  # tab_header(
+  #   title = "EudraVigilance Database Summary",
+  #   subtitle = paste("Total records:", format(nrow(summary_data), big.mark = ","))
+  # ) %>%
   cols_label(
     variable = "Variable",
     n = "Number",

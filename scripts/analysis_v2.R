@@ -328,10 +328,10 @@ publication_table <- results_table_data %>%
   select(`Preferred Term` = pt_clean, Reports = n_reports, PRR = prr_display, 
          `Chi-square` = chi_display, EB05 = eb05_display, `IC Floor` = ic_lower_display) %>%
   gt() %>%
-  tab_header(
-    title = paste("Top 20 Reported Adverse Reactions:", str_to_title(target_drug)),
-    subtitle = "Ranked by frequency with signal detection results"
-  ) %>%
+  # tab_header(
+  #   title = paste("Top 20 Reported Adverse Reactions:", str_to_title(target_drug)),
+  #   subtitle = "Ranked by frequency with signal detection results"
+  # ) %>%
   tab_source_note(
     source_note = paste("N =", format(denominators$n_target, big.mark = ","), 
                         "dogs | Significant: PRR≥2, χ²≥4, EB05≥2, IC₀₂₅>0")
@@ -401,10 +401,10 @@ dpa_publication_table <- dpa_table_data %>%
   select(`Preferred Term` = pt_clean, Reports = n_reports, PRR = prr_display, 
          `Chi-square` = chi_display, EB05 = eb05_display, `IC Floor` = ic_lower_display) %>%
   gt() %>%
-  tab_header(
-    title = paste("Most Disproportionate Adverse Reactions:", str_to_title(target_drug)),
-    subtitle = "Ranked by Proportional Reporting Ratio"
-  ) %>%
+  # tab_header(
+  #   title = paste("Most Disproportionate Adverse Reactions:", str_to_title(target_drug)),
+  #   subtitle = "Ranked by Proportional Reporting Ratio"
+  # ) %>%
   tab_source_note(
     source_note = paste("N =", format(denominators$n_target, big.mark = ","), 
                         "dogs | Significant: PRR≥2, χ²≥4, EB05≥2, IC₀₂₅>0")
@@ -572,10 +572,10 @@ organ_table <- organ_integrated %>%
   slice_head(n = 10) %>%
   select(organ, reports_target, prr, chi_square, ic_lower) %>%
   gt() %>%
-  tab_header(
-    title = md(paste0("**Organ System Analysis**")),
-    subtitle = md("Disproportionality by Organ System - 10 highest PRR")
-  ) %>%
+  # tab_header(
+  #   title = md(paste0("**Organ System Analysis**")),
+  #   subtitle = md("Disproportionality by Organ System - 10 highest PRR")
+  # ) %>%
   cols_label(
     organ = "Organ System",
     reports_target = "Reports",
@@ -588,6 +588,14 @@ organ_table <- organ_integrated %>%
   tab_style(
     style = cell_text(weight = "bold"), 
     locations = cells_body(rows = prr>2 & ic_lower>0)
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), 
+    locations = cells_body()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), 
+    locations = cells_column_labels()
   ) %>%
   tab_style(
     style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")), 
@@ -665,7 +673,7 @@ top_disproportionate <- prr_results %>%
   slice_head(n = 10) %>%
   select(pt, reports_main = reports_target, prr_main = prr, chi_main = chi_square) %>%
   left_join(
-    prr_mono_results %>% select(pt, reports_mono = reports_target, prr_mono = prr, chi_mono = chi_square),
+    prr_mono_results %>% select(pt, reports_mono = reports_target, prr_mono = prr, chi_mono = chi_square, reports_target),
     by = "pt"
   ) %>%
   filter(!is.na(prr_mono)) %>%
@@ -675,10 +683,10 @@ monotherapy_comparison <- bind_rows(top_prevalent, top_disproportionate)
 
 mono_comparison_table <- monotherapy_comparison %>%
   gt(groupname_col = "section") %>%
-  tab_header(
-    title = md(paste0("**Sensitivity Analysis Of Dogs Only On Bedinvetmab**")),
-    subtitle = md("Main Analysis vs Monotherapy")
-  ) %>%
+  # tab_header(
+  #   title = md(paste0("**Sensitivity Analysis Of Dogs Only On Bedinvetmab**")),
+  #   subtitle = md("Main Analysis vs Monotherapy")
+  # ) %>%
   cols_label(
     pt = "Preferred Term",
     reports_main = "Reports",
@@ -689,7 +697,7 @@ mono_comparison_table <- monotherapy_comparison %>%
     chi_mono = md("χ²")
   ) %>%
   tab_spanner(
-    label = "Main Analysis",
+    label = "Main Analysis (n = 30,345)",
     columns = c(reports_main, prr_main, chi_main)
   ) %>%
   tab_spanner(
@@ -701,6 +709,14 @@ mono_comparison_table <- monotherapy_comparison %>%
   tab_style(
     style = list(cell_text(weight = "bold", align = "center")),
     locations = cells_row_groups()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#fff1e5"), cell_text(color = "#2d2d2d")), 
+    locations = cells_body()
+  ) %>%
+  tab_style(
+    style = list(cell_fill(color = "#f2e6dd"), cell_text(weight = "bold", color = "#2d2d2d")), 
+    locations = cells_column_labels()
   ) %>%
   tab_style(
     style = list(cell_fill(color = "#ffcccc"), cell_text(weight = "bold", color = "#d62728")),
