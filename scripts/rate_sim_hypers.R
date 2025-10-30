@@ -721,7 +721,7 @@ adr_rate_plot <- adr_top20_clean %>%
 adr_rate_plot
 
 ggsave(here("output", "figures", "adr_country_rate_heatmap.png"), 
-       adr_rate_plot, width = 14, height = 8, dpi = 600, bg = "#fff1e5")
+       adr_rate_plot, width = 12, height = 7, dpi = 300, bg = "#fff1e5")
 
 # Plot 4. Country contribution boxplot 
 country_contrib <- all_results %>%
