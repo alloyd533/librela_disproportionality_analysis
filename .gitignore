@@ -1,27 +1,22 @@
-# Large data files
-data/processed/matched_data.rds
-data/processed/matched_data.csv
-data/processed/complete_combined_raw.csv
-data/processed/*_combined.csv
-output/simulation/full_sim_dataset.csv
+# Data
+data/processed/
 
+# Outputs
+output/
+logs/
 
-
-# Logs
-logs/*.txt
-
-# R history and session data
+# R session
 .Rhistory
 .RData
+.Ruserdata
 .Rproj.user
 
-# Output files (optional - uncomment if you don't want to track outputs)
-```
+# renv
+renv/library/
+renv/staging/
+renv/sandbox/
+renv/python/
 
-# Other ignores
+# Drafts / working files
 VR_manuscript.Rmd
-
-logs/*.txt
-.Rhistory
-.RData
-.Rproj.user
+rate_simulation.R
