@@ -1,9 +1,10 @@
 # Data
 data/processed/
+data/complete_combined_clean.csv
 
 # Outputs
-output/
-logs/
+output
+logs
 
 # R session
 .Rhistory

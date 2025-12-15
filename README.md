@@ -24,7 +24,9 @@ Comparators: meloxicam, carprofen, firocoxib, enflicoxib, grapiprant, robenacoxi
 
 ### Rate Simulation
 
-Simulates individual dog treatment trajectories (entry time via logistic uptake, survival from breed-size life tables, exponential dropout) in batches until cumulative doses match assumed global sales, then divides observed AE counts by simulated exposed population.
+Simulates individual dog treatment histories (entry via country-specific logistic uptake, survival from breed-size life tables (Montoya), exponential dropout) in batches until cumulative doses match assumed global sales (Zoetis), then divides observed AE counts by simulated exposed population. Hyperparameters (dropout rate, underreporting multiplier, dose wastage, etc.) sampled via Latin Hypercube across 1000 simulations. Runtime ~150 minutes with 8 cores.
+
+Data
 
 **Hyperparameters** sampled via Latin Hypercube (n = 1000):
 
@@ -37,7 +39,7 @@ Simulates individual dog treatment trajectories (entry time via logistic uptake,
 | Total doses sold | 30-31M | Uniform |
 | Reporting rate drift | 0.7-1.3x | Uniform |
 
-**Fixed assumptions** from literature: age at treatment as Beta(4.45, 2.69) scaled to 1-18 years, weight as LogNormal(3.26, 0.57) truncated at 100kg (both Monteiro 2025), survival from size-stratified life tables (Montoya 2023).
+**Fixed assumptions** from Monteiro: age at treatment as Beta(4.45, 2.69) scaled to 1-18 years, weight as LogNormal(3.26, 0.57) truncated at 100kg (both Monteiro 2025), survival from size-stratified life tables (Montoya 2023).
 
 ## Data
 
@@ -62,3 +64,5 @@ tidyverse, readxl, here, janitor, scales, gt, gtExtras, jsonlite, openEBGM, surv
 Montoya et al. (2023). Life expectancy tables for dogs and cats. Frontiers in Veterinary Science 10:1082102.
 
 Monteiro et al. (2025). Global pharmacovigilance reporting of bedinvetmab. Frontiers in Veterinary Science 12:1558222.
+
+Zoetis - total doses -  Librela for Pet Owners | Zoetis Petcare. (n.d.). Retrieved October 23, 2025, from https://www.zoetispetcare.com/products/librela?
