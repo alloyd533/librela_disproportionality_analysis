@@ -1,20 +1,20 @@
 # Bedinvetmab (Librela) Pharmacovigilance Analysis
 
-Disproportionality signal detection and ADR rate estimation for bedinvetmab using EudraVigilance veterinary reports.
+Disproportionality analysis and ADR rate estimation for Bedinvetmab using EudraVigilance ADR reports.
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | 1_cleaning.R | Standardises EudraVigilance exports, detects polypharmacy, maps reactions to VeDDRA hierarchy |
-| 2_dp_analysis.R | Calculates PRR, EBGM, and IC for each preferred term; flags consensus signals (≥2 methods) |
-| 3_rate_sim_hypers.R | Simulates individual dog treatment histories to estimate exposure denominators and ADR rates with uncertainty |
+| 2_dp_analysis.R | Calculates PRR, EBGM, and IC for each preferred term |
+| 3_rate_sim_hypers.R | Simulates individual dog treatment trajectory to estimate exposed dogs and ADR rates with uncertainty |
 
 ## Methods
 
 ### Signal Detection
 
-Three standard pharmacovigilance methods following EMA/FDA conventions:
+Three standard pharmacovigilance methods following FDA Bedinvetmab analysis:
 
 - **PRR** — Proportional Reporting Ratio with chi-squared test (signal: PRR >= 2, chi-squared >= 4)
 - **MGPS/EBGM** — Empirical Bayes Geometric Mean via openEBGM (signal: EB05 >= 2)
