@@ -19,4 +19,4 @@ renv/python/
 
 # Drafts / working files
 VR_manuscript.Rmd
-rate_simulation.R
+scripts/rate_simulation.R
