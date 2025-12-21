@@ -10,7 +10,7 @@
 # 1. Environment Setup -------------------------------------------------------
 required_packages <- c(
   "tidyverse", "readxl", "gt", "scales", "openEBGM", "rlang", "here",
-  "jsonlite", "glue"
+  "jsonlite", "glue",
 )
 
 install_if_missing <- function(packages) {
@@ -693,11 +693,11 @@ mono_comparison_table <- monotherapy_comparison %>%
     chi_mono = md("χ²")
   ) %>%
   tab_spanner(
-    label = "Main Analysis (n = {comma(denominators$n_target)})",
+    label = glue("Main Analysis (n = {comma(denominators$n_target)})"),
     columns = c(reports_main, prr_main, chi_main)
   ) %>%
   tab_spanner(
-    label = "Monotherapy (n = {comma(mono_denominators$n_target)})",
+    label = glue("Monotherapy (n = {comma(mono_denominators$n_target)})"),
     columns = c(reports_mono, prr_mono, chi_mono)
   ) %>%
   fmt_number(columns = c(prr_main, prr_mono, chi_main, chi_mono), decimals = 2) %>%
@@ -818,11 +818,11 @@ nsaid_comparison_table <- nsaid_comparison %>%
     chi_nsaid = md("χ²")
   ) %>%
   tab_spanner(
-    label = "Main Analysis (n = {comma(denominators$n_target)})",
+    label = glue("Main Analysis (n = {comma(denominators$n_target)})"),
     columns = c(reports_main, prr_main, chi_main)
   ) %>%
   tab_spanner(
-    label = "NSAID (n = {comma(nsaid_denominators$n_comparator)})",
+    label = glue("NSAID (n = {comma(nsaid_denominators$n_comparator)})"),
     columns = c(reports_nsaid, prr_nsaid, chi_nsaid)
   ) %>%
   fmt_number(columns = c(prr_main, prr_nsaid, chi_main, chi_nsaid), decimals = 2) %>%

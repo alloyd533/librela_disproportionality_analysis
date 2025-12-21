@@ -501,7 +501,7 @@ print(elapsed)
 cat("SENSITIVITY ANALYSIS COMPLETE\n")
 cat(sprintf("Total: %.1f min | Average: %.2f sec per sim\n", 
             elapsed, elapsed*60 / N_SIMS))
-# 150 mins, average 9s per simulation
+# 169 mins | 10.13s per simulation
 
 # 8. Aggregate and Save Results ------------------------------------------------
 

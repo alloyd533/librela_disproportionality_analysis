@@ -516,10 +516,10 @@ summary_data <- matched %>%
   )
 
 # Calculate PT statistics from PRE-EXPANSION data
-complete %>%
+pt_stats_raw <- complete %>%
   filter(n_study_drugs == 1) %>%
   mutate(n_reactions = str_count(Reaction, ",") + 1) %>%
-  # group_by(drug) %>%
+  group_by(drug) %>%
   summarise(
     mean_reactions = median(n_reactions, na.rm = TRUE),
     max_reactions = max(n_reactions, na.rm = TRUE),
@@ -591,10 +591,10 @@ data_summary_table_data <- bind_rows(
 
 data_summary_table <- data_summary_table_data %>%
   gt() %>%
-  # tab_header(
-  #   title = "EudraVigilance Database Summary",
-  #   subtitle = paste("Total records:", format(nrow(summary_data), big.mark = ","))
-  # ) %>%
+  tab_header(
+    title = "EudraVigilance Database Summary",
+    subtitle = paste("Total records:", format(nrow(summary_data), big.mark = ","))
+  ) %>%
   cols_label(
     variable = "Variable",
     n = "Number",
